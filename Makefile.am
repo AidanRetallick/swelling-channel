@@ -1,6 +1,7 @@
 # Name of executables: The prefix "noinst" means the executables don't
 # have to be installed anywhere.
 noinst_PROGRAMS = rectangular_plate_koiter_steigmann           \
+				  symmetric_rectangular_plate_koiter_steigmann \
                   rectangular_pressure_cycle_koiter_steigmann  \
                   infinite_strip_koiter_steigmann              \
                   euler_column_buckling_koiter_steigmann
@@ -10,6 +11,9 @@ include $(top_srcdir)/config/makefile_templates/demo_drivers
 # Local sources that each code depends on:
 rectangular_plate_koiter_steigmann_SOURCES = \
  rectangular_plate_koiter_steigmann.cc
+
+symmetric_rectangular_plate_koiter_steigmann_SOURCES = \
+ symmetric_rectangular_plate_koiter_steigmann.cc
 
 rectangular_pressure_cycle_koiter_steigmann_SOURCES = \
  rectangular_pressure_cycle_koiter_steigmann.cc
@@ -22,6 +26,8 @@ euler_column_buckling_koiter_steigmann_SOURCES = \
 #---------------------------------------------------------------------------
 
 rectangular_plate_koiter_steigmann_LDADD = -L@libdir@ -lc1_koiter_steigmann \
+ -lgeneric $(EXTERNAL_LIBS) $(FLIBS)
+symmetric_rectangular_plate_koiter_steigmann_LDADD = -L@libdir@ -lc1_koiter_steigmann \
  -lgeneric $(EXTERNAL_LIBS) $(FLIBS)
 rectangular_pressure_cycle_koiter_steigmann_LDADD = -L@libdir@ -lc1_koiter_steigmann \
  -lgeneric $(EXTERNAL_LIBS) $(FLIBS)
@@ -51,5 +57,5 @@ euler_column_buckling_koiter_steigmann_LDADD = -L@libdir@ -lc1_koiter_steigmann 
 # Automake will replace the variable @includedir@ with the actual
 # include directory.
 
-AM_CPPFLAGS += -I@includedir@ -Wall -ggdb3 -O0
+AM_CPPFLAGS += -I@includedir@ -Wall -ggdb3 -O3
 #EXTRA_DIST = Circle1.1.ele Circle1.1.node Circle1.1.poly

@@ -638,7 +638,7 @@ void UnstructuredKSProblem<ELEMENT>::complete_problem_setup()
     el_pt->enable_damping();
 
     // Use the fd jacobian
-    // el_pt->enable_finite_difference_jacobian();
+    el_pt->enable_finite_difference_jacobian();
   }
 
   // Do we want to pin in-plane displacement?
@@ -1125,8 +1125,8 @@ int main(int argc, char** argv)
 
   // How many nodes do we want to manually place along the boundaries
   // (roughly length*width/thickness)
-  Parameters::n_long_edge_nodes = ceil(0.0 * Parameters::L1 / Parameters::Thickness) + 2;
-  Parameters::n_short_edge_nodes = ceil(0.0 * Parameters::L2 / Parameters::Thickness) + 2;
+  Parameters::n_long_edge_nodes = ceil(0.1 * Parameters::L1 / Parameters::Thickness) + 2;
+  Parameters::n_short_edge_nodes = ceil(0.1 * Parameters::L2 / Parameters::Thickness) + 2;
 
   // Doc what has actually been specified on the command line
   CommandLineArgs::doc_specified_flags();
