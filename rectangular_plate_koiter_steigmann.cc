@@ -322,7 +322,12 @@ public:
 
   /// Attempt an ordinary steady solve, but failing that solve an unsteady
   /// damped version of the equations with a run of adaptive unsteady solves.
-  void damped_solve(double dt, double epsilon, bool doc_unsteady = false);
+  /// Returns that timestep size that is reccommended by the first successful
+  /// solve to be used as a guess for the next damped_solve dt -- if the
+  /// deformation is roughly the same, it should work fine. This way the only
+  /// time we should need to seek for an appropriate dt is if the
+  /// control-deformation regime has changed.
+  double damped_solve(double dt, double epsilon, bool doc_unsteady = false);
 
   /// Doc the solution
   void doc_solution(const bool steady, const std::string& comment = "");
@@ -773,14 +778,28 @@ void UnstructuredKSProblem<ELEMENT>::apply_boundary_conditions()
 } // end set bc
 
 
-
+//==start_of_damped_solve ================================================
+/// Attempt an ordinary steady solve, but failing that solve an unsteady
+/// damped version of the equations with a run of adaptive unsteady solves.
+/// Returns that timestep size that is reccommended by the first successful
+/// solve to be used as a guess for the next damped_solve dt -- if the
+/// deformation is roughly the same, it should work fine. This way the only
+/// time we should need to seek for an appropriate dt is if the
+/// control-deformation regime has changed.
+//========================================================================
 template<class ELEMENT>
-void UnstructuredKSProblem<ELEMENT>::damped_solve(double dt,
-                                                   double epsilon,
-                                                   bool doc_unsteady)
+double UnstructuredKSProblem<ELEMENT>::damped_solve(double dt,
+                                                    double epsilon,
+                                                    bool doc_unsteady)
 {
+  // Assume we start unsteady
   bool steady = false;
-  double sufficiently_small = 1.0e-1;
+  // Max residual of the steady problem before we attempt a steady solve
+  double sufficiently_small = 1.0e-2;
+  // Value to be returned for initial guess for next damped_solve dt
+  double dt_initial_guess = dt;
+  // Only set dt_initial_guess once, after the first successful solve
+  bool dt_initial_guess_is_unset = true;
 
   // If we are documenting the damped stage, create an initial state before any
   // unsteady solves have been done.
@@ -795,12 +814,23 @@ void UnstructuredKSProblem<ELEMENT>::damped_solve(double dt,
 
   while (!steady)
   {
-    oomph_info << "NEW DAMPED PSEUDO-TIME STEP" << std::endl;
-
+    //------------------------------------------------------------------------
     // Try get us close to a steady solution by solving the damped version of
     // the equations.
+    oomph_info << "NEW DAMPED PSEUDO-TIME STEP WITH: dt = "
+	       << dt << std::endl;
     double dt_next = adaptive_unsteady_newton_solve(dt, epsilon);
     dt = dt_next;
+
+    // If we haven't set the initial guess for the next damped solve dt, then
+    // set it now. It should be the recommended timestep after the first
+    // successful solve. Assuming the following damped solve will start in a
+    // roughly similar state to this one, this is appropriate.
+    if (dt_initial_guess_is_unset)
+    {
+      dt_initial_guess = dt_next;
+      dt_initial_guess_is_unset = false;
+    }
 
     // If we are documenting the unsteady solutions then do so, else just
     // just increase the unsteady step counter.
@@ -834,54 +864,75 @@ void UnstructuredKSProblem<ELEMENT>::damped_solve(double dt,
                << "The max steady residual is " << max_steady_residual
                << std::endl;
 
-    // If it is "sufficiently small" then try a steady solve
-    if (max_steady_residual < sufficiently_small)
-    {
-      oomph_info << "ALMOST STEADY SO ATTEMPT A STEADY SOLVE" << std::endl;
-      store_current_dof_values();
-      try
-      {
-        steady_newton_solve();
-        if (doc_unsteady)
-        {
-          doc_solution(false);
-        }
-        steady = true;
-      }
-      catch (OomphLibError& error)
-      {
-        if (sufficiently_small < newton_solver_tolerance())
-        {
-          oomph_info << "WARNING";
-          oomph_info << "\"sufficiently small\" is now " << sufficiently_small
-                     << " which is smaller than the solver tolerance.";
-          oomph_info << " Giving up on damped solves..." << std::endl;
-          throw error;
-        } // End of if tolerance is to small
-        else
-        {
-          oomph_info << "NOT STEADY ENOUGH. \"sufficiently_small\" is "
-                     << "insufficiently small so we are decreasing it "
-                     << "from " << sufficiently_small << " to "
-                     << 0.1 * sufficiently_small << " from now on" << std::endl;
-          sufficiently_small *= 0.1;
-          restore_dof_values();
-          for (unsigned i = 0; i < ntime_stepper(); i++)
-          {
-            time_stepper_pt(i)->undo_make_steady();
-          }
-          assign_initial_values_impulsive(dt);
-          error.disable_error_message();
-        } // End of else tolerance is not too small
-      } // End of catch error
-    } // End of if steady_max_residual < sufficiently_small
-
     // Reset time steppers
     for (unsigned i = 0; i < ntime_stepper(); i++)
     {
       time_stepper_pt(i)->undo_make_steady();
     }
+
+
+    //------------------------------------------------------------------------
+    // If it is "sufficiently small" then try a steady solve
+    if (max_steady_residual < sufficiently_small)
+    {
+      oomph_info << "ALMOST STEADY SO ATTEMPT A STEADY SOLVE" << std::endl;
+      // Store the dofs before a steady solve so that they can be put back in
+      // case it fails
+      store_current_dof_values();
+      try
+      {
+        steady_newton_solve();
+	// If that worked, we have achieved steady state
+        steady = true;
+	// If we are documenting the unsteady states, add the final solution to
+	// the unsteady solution outputs
+        if (doc_unsteady)
+        {
+          doc_solution(false);
+        }
+      }
+      // If the steady solve fails, we need to tidy up before carrying on
+      catch (OomphLibError& error)
+      {
+	// If our tolerance to attempt a steady solve is smaller than the
+	// tolerance, then this implies that the initial residual was within
+	// tolerance and we still got an error! SHIT!!
+        if (sufficiently_small < newton_solver_tolerance())
+        {
+          oomph_info << "UH OH\n"
+		     << "\"sufficiently small\" is now " << sufficiently_small
+                     << " which is smaller than the solver tolerance.\n"
+                     << "Our initial residual was smaller than the tolerance"
+		     << " and we still got an error which is bloody stupid.\n"
+		     << "Giving up on damped solves..." << std::endl;
+          throw error;
+        } // End of if tolerance is to small
+        else
+        {
+          oomph_info << "NOT STEADY ENOUGH.\n"
+		     << "\"sufficiently_small\" is insufficiently small so we\n"
+		     << "are decreasing it from " << sufficiently_small
+		     << " to " << 0.1 * sufficiently_small << " from now on"
+		     << std::endl;
+	  // Decrease the threshold for attempting steady solves as this one
+	  // didn't work
+          sufficiently_small *= 0.1;
+	  // Go back to the state we were in before attempting the steady solve
+          restore_dof_values();
+          for (unsigned i = 0; i < ntime_stepper(); i++)
+          {
+            time_stepper_pt(i)->undo_make_steady();
+          }
+	  // Keep calm and carry on
+          error.disable_error_message();
+
+        } // End of else tolerance is not too small
+      } // End of catch error
+    } // End of if steady_max_residual < sufficiently_small
   } // End of while(UNSTEADY)
+
+  // Solve complete, return initial guess
+  return dt_initial_guess;
 }
 
 
@@ -1169,7 +1220,13 @@ int main(int argc, char** argv)
   ParaviewHelper::write_pvd_header(pvd_stream);
   Parameters::pvd_stream_pt = &pvd_stream;
 
-  oomph_info << "DO AN INITIAL STATE SOLVE" << std::endl;
+  oomph_info
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << "DO AN INITIAL STATE SOLVE\n"
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << std::endl;
   // INITIAL SOLVE
   problem.steady_newton_solve(); // SOLVE
 
@@ -1181,21 +1238,33 @@ int main(int argc, char** argv)
       Parameters::P_mag += p_inc;
 
       // Pre-inflate the membrane
-      oomph_info << "INFLATION STAGE" << std::endl;
-      problem.damped_solve(dt, epsilon, false);
+      oomph_info
+        << "=================================================================\n"
+	<< "=================================================================\n"
+	<< "INFLATION STAGE\n"
+	<< "=================================================================\n"
+        << "=================================================================\n"
+        << std::endl;
+      dt = problem.damped_solve(dt, epsilon, false);
       problem.doc_solution(true); // AND DOCUMENT
     }
   }
 
   // Swell the membrane
-  oomph_info << "SWELLING STAGE" << std::endl;
+  oomph_info
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << "SWELLING STAGE\n"
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << std::endl;
   while (Parameters::C_mag < Parameters::C_swell_max)
   {
     Parameters::C_mag += c_inc;
     Parameters::C_swell_data_pt->set_value(0, Parameters::C_mag);
     oomph_info << "c_swell = " << Parameters::C_mag << std::endl;
     // bool argument to specify whether we want to doc unsteady time steps.
-    problem.damped_solve(dt, epsilon, false);
+    dt = problem.damped_solve(dt, epsilon, false);
     problem.doc_solution(true);
   } // End of swelling loop
 
