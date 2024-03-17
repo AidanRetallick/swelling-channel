@@ -63,25 +63,31 @@ public:
 namespace Parameters
 {
   // Plate parameters
-  double L1 = 5.0;
+  double L1 = 10.0;
   double L2 = 1.0;
-  double Thickness = 0.0054;
+  double Initial_thickness = 0.00548;
   double Nu = 0.495;
-  double Mu = 1.0-1;
-  double eta = 12.0 * (1.0 - Nu * Nu) / (Thickness * Thickness);
-  // double relevant_energy_factor = 100.0;
+  double Mu = 1.0e0;
 
   // Control parameters
   double P_mag = 0.0;
   double C_mag = 0.0;
-  double C_swell_max = 0.01;
+  double C_swell_max = 0.2;
   Data* C_swell_data_pt;
+  double Iso_prestrain = 0.00325;
+
+  // Dependent parameters
+  double Thickness = Initial_thickness * (1.0 + C_mag);
+  double update_dependent_parameters()
+  {
+    Parameters::C_swell_data_pt->set_value(0, Parameters::C_mag);
+    Thickness = Initial_thickness * (1.0 + C_mag);
+  }
 
   // Dimensions
-  double L_dim = 5.0e-3;
-  double E_dim = 1.67e6;
-  double P_dim = E_dim * Thickness;
-  // double P_dim =  E_dim * Thickness * Thickness * Thickness / (12.0 * (1.0 - Nu * Nu));
+  double L_dim = 4.93e-3;
+  double E_dim = 1.99e6;
+  double P_dim = E_dim * Initial_thickness;
 
   // Mesh parameters
   double element_area = 0.1;
@@ -149,7 +155,7 @@ namespace Parameters
     // Swelling at x
     double c = 0.0;
     get_swelling(x, c);
-    double isostrain = -(c + 0.5*c*c);
+    double isostrain = Iso_prestrain - (c + 0.5*c*c);
     prestrain(0,0) = isostrain;
     prestrain(0,1) = 0.0;
     prestrain(1,0) = 0.0;
@@ -1261,7 +1267,7 @@ int main(int argc, char** argv)
   while (Parameters::C_mag < Parameters::C_swell_max)
   {
     Parameters::C_mag += c_inc;
-    Parameters::C_swell_data_pt->set_value(0, Parameters::C_mag);
+    Parameters::update_dependent_parameters();
     oomph_info << "c_swell = " << Parameters::C_mag << std::endl;
     // bool argument to specify whether we want to doc unsteady time steps.
     dt = problem.damped_solve(dt, epsilon, false);
