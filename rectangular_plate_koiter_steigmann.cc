@@ -649,7 +649,7 @@ void UnstructuredKSProblem<ELEMENT>::complete_problem_setup()
     el_pt->enable_damping();
 
     // Use the fd jacobian
-    // el_pt->enable_finite_difference_jacobian();
+    el_pt->enable_finite_difference_jacobian();
   }
 
   // Do we want to pin in-plane displacement?
@@ -1208,7 +1208,7 @@ int main(int argc, char** argv)
 
   double p_inc = p_inc_dim / Parameters::P_dim;
   double dt = problem.next_dt();
-  double epsilon = 1.0e-3;
+  double epsilon = 1.0e-4;
   problem.assign_initial_values_impulsive();
   problem.initialise_dt(dt);
 

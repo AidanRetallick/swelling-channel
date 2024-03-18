@@ -1212,7 +1212,7 @@ int main(int argc, char** argv)
 
   double p_inc = p_inc_dim / Parameters::P_dim;
   double dt = problem.next_dt();
-  double epsilon = 1.0e-3;
+  double epsilon = 1.0e-4;
   problem.assign_initial_values_impulsive();
   problem.initialise_dt(dt);
 
