@@ -79,7 +79,7 @@ namespace Parameters
   // Dependent parameters
   double Thickness = Initial_thickness * (1.0 + C_mag);
   double Eta = 12.0 * (1.0 - Nu * Nu) / (Thickness * Thickness);
-  double update_dependent_parameters()
+  void update_dependent_parameters()
   {
     Parameters::C_swell_data_pt->set_value(0, Parameters::C_mag);
     Thickness = Initial_thickness * (1.0 + C_mag);

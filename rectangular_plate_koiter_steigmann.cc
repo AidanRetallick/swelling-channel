@@ -78,7 +78,7 @@ namespace Parameters
 
   // Dependent parameters
   double Thickness = Initial_thickness * (1.0 + C_mag);
-  double update_dependent_parameters()
+  void update_dependent_parameters()
   {
     Parameters::C_swell_data_pt->set_value(0, Parameters::C_mag);
     Thickness = Initial_thickness * (1.0 + C_mag);
@@ -103,6 +103,20 @@ namespace Parameters
   {
     // Constant pressure
     pressure = P_mag;
+  }
+
+  /// Pressure acting purely vertically
+  void get_pressure_vert(const Vector<double>& x,
+		         const Vector<double>& u,
+			 const DenseMatrix<double>& grad_u,
+			 const Vector<double>& n,
+			 Vector<double>& pressure)
+  {
+    // Assign pressure
+    pressure.resize(3);
+    pressure[0] = 0.0;
+    pressure[1] = 0.0;
+    pressure[2] = P_mag;
   }
 
   /// Pressure depending on the position (x,y) and deformation of the sheet
