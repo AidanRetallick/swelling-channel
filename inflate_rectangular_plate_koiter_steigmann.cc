@@ -27,15 +27,13 @@
 // LIC// The authors may be contacted at oomph-lib@maths.man.ac.uk.
 // LIC//
 // LIC//====================================================================
-
-// So we are careful with our floats :)
-#include <cfenv>
-// So we can have funky function returns
-#include <tuple>
+#include <fenv.h>
 // Generic routines
 #include "generic.h"
+
 // The equations
 #include "c1_koiter_steigmann.h"
+
 // The mesh
 #include "meshes/triangle_mesh.h"
 
@@ -74,11 +72,15 @@ namespace Parameters
   // Control parameters
   double P_mag = 0.0;
   double C_mag = 0.0;
-  double C_swell_max = 0.2;
-  double C_swell_min = 0.21;
-  double C_swell_inc = 0.002;
   Data* C_swell_data_pt;
   double Isotropic_prestrain = 0.00325;
+  // Control parameter limits
+  double P_max = 0.0;
+  double C_swell_max = 0.0;
+  double C_swell_min = 0.0;
+  // Control parameter increment sizes
+  double P_inc = 1.0;
+  double C_swell_inc = 0.0;
 
   // Dependent parameters
   double Thickness = Initial_thickness * (1.0 + C_mag);
@@ -111,7 +113,7 @@ namespace Parameters
 
   /// Pressure acting purely vertically
   void get_pressure_vert(const Vector<double>& x,
-		         const Vector<double>& u,
+						 const Vector<double>& u,
 			 const DenseMatrix<double>& grad_u,
 			 const Vector<double>& n,
 			 Vector<double>& pressure)
@@ -125,10 +127,10 @@ namespace Parameters
 
   /// Pressure depending on the position (x,y) and deformation of the sheet
   void get_pressure(const Vector<double>& x,
-		    const Vector<double>& u,
-		    const DenseMatrix<double>& grad_u,
-		    const Vector<double>& n,
-		    Vector<double>& pressure)
+				const Vector<double>& u,
+				const DenseMatrix<double>& grad_u,
+				const Vector<double>& n,
+				Vector<double>& pressure)
   {
     // Metric tensor of deformed surface
     DenseMatrix<double> G(2,2,0.0);
@@ -140,7 +142,7 @@ namespace Parameters
 	G(alpha, beta) += grad_u(alpha, beta) + grad_u(beta, alpha);
 	for (unsigned i = 0; i < 3; i++)
 	{
-	  G(alpha, beta) += grad_u(i, alpha) * grad_u(i, beta);
+		G(alpha, beta) += grad_u(i, alpha) * grad_u(i, beta);
 	}
       }
     }
@@ -168,7 +170,7 @@ namespace Parameters
 
   /// Swelling induced prestrain
   void get_swelling_prestrain(const Vector<double>& x,
-			      DenseMatrix<double>& prestrain)
+						DenseMatrix<double>& prestrain)
   {
     // Swelling at x
     double c = 0.0;
@@ -276,6 +278,12 @@ public:
     STORE_XZ_PROFILES = false;
   }
 
+  /// Update after solve (empty)
+  void actions_after_newton_solve()
+  {
+    /* No actions before newton solve */
+  }
+
   /// Pin the in-plane displacements and set to zero at centre
   void pin_in_plane_displacements_at_centre_node();
 
@@ -311,12 +319,6 @@ public:
                << std::endl;
   }
 
-  /// Update after solve (empty)
-  void actions_after_newton_solve()
-  {
-    // No actions after newton solve
-  }
-
   /// Remove surface mesh before reading
   void actions_before_read_unstructured_meshes()
   {
@@ -343,29 +345,15 @@ public:
     complete_problem_setup();
   }
 
-  /// Used damped solves to get close to a steady solution, when close
-  /// enough, attempt a steady solve. If that fails, be stricter about the
-  /// meaning of "close enough" and repeat until a steady solve succeeds.
-  ///
-  /// Expects:
-  ///   dt_supplied_guess -- a guess for a good timestep size
-  ///             epsilon -- an 'error tolerance' for the timestepper to limit
-  ///                        the size of a damped step
-  /// Accepts:
-  ///        doc_unsteady -- do we document every unsteady (nonphysical) solve
-  ///   begin_with_steady -- do we begin by trying a steady solve
-  ///
-  /// Returns:
-  ///   A tuple containing suggestions to use as the inputs in the next
-  ///   damped_solve. First a double suggestion for dt which is the timestep
-  ///   of the first successful solve -- if the size of deformation is roughly
-  ///   the same, it should work fine. Secondly a bool suggestion for
-  ///   begin_with_steady which is true if this damped_solve took <2 timesteps.
-  std::tuple<double, bool> damped_solve(const double& dt,
-					const double& epsilon,
-					const bool& doc_unsteady = false,
-					const bool& begin_with_steady = false);
 
+  /// Attempt an ordinary steady solve, but failing that solve an unsteady
+  /// damped version of the equations with a run of adaptive unsteady solves.
+  /// Returns that timestep size that is reccommended by the first successful
+  /// solve to be used as a guess for the next damped_solve dt -- if the
+  /// deformation is roughly the same, it should work fine. This way the only
+  /// time we should need to seek for an appropriate dt is if the
+  /// control-deformation regime has changed.
+  double damped_solve(double dt, double epsilon, bool doc_unsteady = false);
 
   /// Doc the solution
   void doc_solution(const bool steady, const std::string& comment = "");
@@ -803,12 +791,12 @@ void UnstructuredKSProblem<ELEMENT>::apply_boundary_conditions()
 	// are simply set to zero using Parameters::get_null_fct.
 	for (unsigned k = 0; k < n_pinned_u_dofs; k++)
 	{
-	  unsigned k_type = pinned_u_dofs[b][i_field][k];
-	  std::cout << "On boundary " << b
-		    << " pinning deflection " << i_field
-		    << " type " << k_type << std::endl;
-	  el_pt->set_boundary_condition(
-	    i_field, k_type, b, Parameters::get_null_fct);
+		unsigned k_type = pinned_u_dofs[b][i_field][k];
+		std::cout << "On boundary " << b
+				<< " pinning deflection " << i_field
+				<< " type " << k_type << std::endl;
+		el_pt->set_boundary_condition(
+			i_field, k_type, b, Parameters::get_null_fct);
 	} // end for loop over types that need to be pinned [k]
       } // end for loop over displacements [i_field]
     } // end for loop over elements on b [e]
@@ -816,45 +804,29 @@ void UnstructuredKSProblem<ELEMENT>::apply_boundary_conditions()
 
 } // end set bc
 
+
 //==start_of_damped_solve ================================================
-/// Used damped solves to get close to a steady solution, when close
-/// enough, attempt a steady solve. If that fails, be stricter about the
-/// meaning of "close enough" and repeat until a steady solve succeeds.
-///
-/// Expects:
-///   dt_supplied_guess -- a guess for a good timestep size
-///             epsilon -- an 'error tolerance' for the timestepper to limit
-///                        the size of a damped step
-/// Accepts:
-///        doc_unsteady -- do we document every unsteady (nonphysical) solve
-///   begin_with_steady -- do we begin by trying a steady solve
-///
-/// Returns:
-///   A tuple containing suggestions to use as the inputs in the next
-///   damped_solve. First a double suggestion for dt which is the timestep
-///   of the first successful solve -- if the size of deformation is roughly
-///   the same, it should work fine. Secondly a bool suggestion for
-///   begin_with_steady which is true if this damped_solve took <2 timesteps.
+/// Attempt an ordinary steady solve, but failing that solve an unsteady
+/// damped version of the equations with a run of adaptive unsteady solves.
+/// Returns that timestep size that is reccommended by the first successful
+/// solve to be used as a guess for the next damped_solve dt -- if the
+/// deformation is roughly the same, it should work fine. This way the only
+/// time we should need to seek for an appropriate dt is if the
+/// control-deformation regime has changed.
 //========================================================================
 template<class ELEMENT>
-std::tuple<double, bool> UnstructuredKSProblem<ELEMENT>::damped_solve(
-  const double& dt_supplied_guess,
-  const double& epsilon,
-  const bool& doc_unsteady,
-  const bool& begin_with_steady)
+double UnstructuredKSProblem<ELEMENT>::damped_solve(double dt,
+                                                    double epsilon,
+                                                    bool doc_unsteady)
 {
-  // We are unsteady until a steady solve succeeds
+  // Assume we start unsteady
   bool steady = false;
   // Max residual of the steady problem before we attempt a steady solve
   double sufficiently_small = 1.0e-2;
-  // Timestep size
-  double dt = dt_supplied_guess;
-  // Try steady indicates when we should attempt a steady solve
-  bool try_steady = begin_with_steady;
   // Value to be returned for initial guess for next damped_solve dt
-  double dt_return_guess = dt;
+  double dt_initial_guess = dt;
   // Only set dt_initial_guess once, after the first successful solve
-  bool dt_return_guess_is_unset = true;
+  bool dt_initial_guess_is_unset = true;
 
   // If we are documenting the damped stage, create an initial state before any
   // unsteady solves have been done.
@@ -870,28 +842,74 @@ std::tuple<double, bool> UnstructuredKSProblem<ELEMENT>::damped_solve(
   while (!steady)
   {
     //------------------------------------------------------------------------
-    // If we are supposed to try a steady solve, do it
-    // [zdec] maybe move this if() into a helper function that is called as
-    // appropriate
-    if (try_steady)
+    // Try get us close to a steady solution by solving the damped version of
+    // the equations.
+    oomph_info << "NEW DAMPED PSEUDO-TIME STEP WITH: dt = "
+				 << dt << std::endl;
+    double dt_next = adaptive_unsteady_newton_solve(dt, epsilon);
+    dt = dt_next;
+
+    // If we haven't set the initial guess for the next damped solve dt, then
+    // set it now. It should be the recommended timestep after the first
+    // successful solve. Assuming the following damped solve will start in a
+    // roughly similar state to this one, this is appropriate.
+    if (dt_initial_guess_is_unset)
     {
-      oomph_info << "ATTEMPT A STEADY SOLVE" << std::endl;
+      dt_initial_guess = dt_next;
+      dt_initial_guess_is_unset = false;
+    }
+
+    // If we are documenting the unsteady solutions then do so, else just
+    // just increase the unsteady step counter.
+    if (doc_unsteady)
+    {
+      doc_solution(false);
+    }
+    else
+    {
+      Doc_unsteady_info.number()++;
+    }
+
+    //------------------------------------------------------------------------
+    // Check how close we are to a steady solution by getting the steady
+    // max residual, if it is sufficiently small, try a steady solve.
+    // If that doesn't work, restrict what it means to be "sufficiently small"
+    // and return to unsteady. We repeat this until the steady solve works,
+    // or, we give up.
+
+    // First set the timesteppers to steady
+    for (unsigned i = 0; i < ntime_stepper(); i++)
+    {
+      time_stepper_pt(i)->make_steady();
+    }
+
+    // Then get the residual
+    DoubleVector res;
+    get_residuals(res);
+    double max_steady_residual = res.max();
+    oomph_info << std::endl
+               << "The max steady residual is " << max_steady_residual
+               << std::endl;
+
+    // Reset time steppers
+    for (unsigned i = 0; i < ntime_stepper(); i++)
+    {
+      time_stepper_pt(i)->undo_make_steady();
+    }
+
+
+    //------------------------------------------------------------------------
+    // If it is "sufficiently small" then try a steady solve
+    if (max_steady_residual < sufficiently_small)
+    {
+      oomph_info << "ALMOST STEADY SO ATTEMPT A STEADY SOLVE" << std::endl;
       // Store the dofs before a steady solve so that they can be put back in
       // case it fails
       store_current_dof_values();
-      // Get the max residual in case we need it to adjust sufficiently_small
-      DoubleVector res;
-      get_residuals(res);
-      double max_steady_residual = res.max();
       try
       {
-	// <<< Solve >>>
         steady_newton_solve();
-	// If that worked, we have achieved steady state.
-	// Celebrate and take note
-	oomph_info << "\nHOORAY\n"
-		   << "Steady solve was successful, damped solve complete\n"
-		   << std::endl;
+	// If that worked, we have achieved steady state
         steady = true;
 	// If we are documenting the unsteady states, add the final solution to
 	// the unsteady solution outputs
@@ -908,112 +926,40 @@ std::tuple<double, bool> UnstructuredKSProblem<ELEMENT>::damped_solve(
 	// tolerance and we still got an error! SHIT!!
         if (sufficiently_small < newton_solver_tolerance())
         {
-          oomph_info << "\nUH OH\n"
-		     << "\"sufficiently small\" is now " << sufficiently_small
+          oomph_info << "UH OH\n"
+				 << "\"sufficiently small\" is now " << sufficiently_small
                      << " which is smaller than the solver tolerance.\n"
                      << "Our initial residual was smaller than the tolerance"
-		     << " and we still got an error which is bloody stupid.\n"
-		     << "Giving up on damped solves..." << std::endl;
+				 << " and we still got an error which is bloody stupid.\n"
+				 << "Giving up on damped solves..." << std::endl;
           throw error;
         } // End of if tolerance is to small
         else
         {
-          oomph_info << "\nNOT STEADY ENOUGH.\n"
-		     << "\"sufficiently_small\" is insufficiently small so we\n"
-		     << "are decreasing it from " << sufficiently_small
-		     << " to " << max_steady_residual / 2.0 << " from now on.\n"
-		     << "Returning to damped solves...\n"
-		     << std::endl;
-	  // Decrease the threshold for attempting steady solves as this one
-	  // didn't work
-          sufficiently_small = max_steady_residual / 2.0;
-	  // Go back to the state we were in before attempting the steady solve
+          oomph_info << "NOT STEADY ENOUGH.\n"
+				 << "\"sufficiently_small\" is insufficiently small so we\n"
+				 << "are decreasing it from " << sufficiently_small
+				 << " to " << 0.1 * sufficiently_small << " from now on"
+				 << std::endl;
+		// Decrease the threshold for attempting steady solves as this one
+		// didn't work
+          sufficiently_small *= 0.1;
+		// Go back to the state we were in before attempting the steady solve
           restore_dof_values();
           for (unsigned i = 0; i < ntime_stepper(); i++)
           {
             time_stepper_pt(i)->undo_make_steady();
           }
-	  // Stop trying steady solves
-	  try_steady = false;
-	  // Keep calm and carry on
+		// Keep calm and carry on
           error.disable_error_message();
 
         } // End of else tolerance is not too small
       } // End of catch error
-    } // End of if try_steady
+    } // End of if steady_max_residual < sufficiently_small
+  } // End of while(UNSTEADY)
 
-    //------------------------------------------------------------------------
-    // Try get us close to a steady solution by solving the damped version of
-    // the equations. When it is time to try a steady solve, break this loop.
-    while(!try_steady)
-    {
-      //----------------------------------------------------------------------
-      // Begin by doing a damped solve
-      oomph_info << "NEW DAMPED PSEUDO-TIME STEP WITH: dt = "
-		 << dt << std::endl;
-      double dt_next = adaptive_unsteady_newton_solve(dt, epsilon);
-      dt = dt_next;
-
-      // If we haven't set the initial guess for the next damped solve dt, then
-      // set it now. It should be the recommended timestep after the first
-      // successful solve. Assuming the following damped solve will start in a
-      // roughly similar state to this one, this is appropriate.
-      if (dt_return_guess_is_unset)
-      {
-	dt_return_guess = dt_next;
-	dt_return_guess_is_unset = false;
-      }
-
-      // If we are documenting the unsteady solutions then do so, else just
-      // just increase the unsteady step counter to keep count of damped steps
-      if (doc_unsteady)
-      {
-	doc_solution(false);
-      }
-      else
-      {
-	Doc_unsteady_info.number()++;
-      }
-
-      //------------------------------------------------------------------------
-      // Check how close we are to a steady solution by getting the steady
-      // max residual, if it is sufficiently small, try a steady solve.
-      // If that doesn't work, restrict what it means to be "sufficiently small"
-      // and return to unsteady. We repeat this until the steady solve works,
-      // or, we give up.
-
-      // First set the timesteppers to steady
-      for (unsigned i = 0; i < ntime_stepper(); i++)
-      {
-	time_stepper_pt(i)->make_steady();
-      }
-
-      // Then get the residual
-      DoubleVector res;
-      get_residuals(res);
-      double max_steady_residual = res.max();
-      oomph_info << std::endl
-		 << "The max steady residual is " << max_steady_residual
-		 << std::endl;
-
-      // If it is "sufficiently small" then try a steady solve
-      try_steady = max_steady_residual < sufficiently_small;
-
-      // Reset time steppers
-      for (unsigned i = 0; i < ntime_stepper(); i++)
-      {
-	time_stepper_pt(i)->undo_make_steady();
-      }
-    } // End of while(!try_steady)
-  } // End of while(!steady)
-
-  //----------------------------------------------------------------------
-  // Steady state achieved, return suggestions for next damped solve
-  // -- A good timestep to use would be the first successful one
-  // -- Next time start with a steady solve if it took one or zero damped steps
-  bool next_time_begin_with_steady = Doc_unsteady_info.number() - 1 < 2;
-
-  return std::make_tuple(dt_return_guess, next_time_begin_with_steady);
+  // Solve complete, return initial guess
+  return dt_initial_guess;
 }
 
 
@@ -1022,7 +968,7 @@ std::tuple<double, bool> UnstructuredKSProblem<ELEMENT>::damped_solve(
 //========================================================================
 template<class ELEMENT>
 void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
-						  const std::string& comment)
+                                                   const std::string& comment)
 {
   if (MPI_Helpers::communicator_pt()->my_rank() == 0)
   {
@@ -1048,20 +994,20 @@ void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
     // if(steady)
     //  {
     //   sprintf(filename, "%s/coarse_soln_%i.dat",
-    // 	     Parameters::output_dir.c_str(),
-    // 	     Doc_steady_info.number());
+    //			 Parameters::output_dir.c_str(),
+    //			 Doc_steady_info.number());
     //  }
     // else
     //  {
     //   sprintf(filename, "%s/coarse_soln_%i_%i.dat",
-    // 	     Parameters::output_dir.c_str(),
-    // 	     Doc_steady_info.number(),
-    // 	     Doc_unsteady_info.number());
+    //			 Parameters::output_dir.c_str(),
+    //			 Doc_steady_info.number(),
+    //			 Doc_unsteady_info.number());
     //  }
     // some_file.open(filename);
     // Bulk_mesh_pt->output(some_file,npts);
     // some_file << "TEXT X = 22, Y = 92, CS=FRAME T = \""
-    // 	     << comment << "\"\n";
+    //			 << comment << "\"\n";
     // some_file.close();
 
     // Number of plot points for fine outpout
@@ -1109,9 +1055,9 @@ void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
                       << Doc_unsteady_info.number() << " " << time() << " "
                       << Parameters::P_mag << " "
                       << Parameters::C_swell_data_pt->value(0) << " "
-		      << u_centre[0][0] << " "
-		      << u_centre[1][0] << " "
-		      << u_centre[2][0] << " "
+					<< u_centre[0][0] << " "
+					<< u_centre[1][0] << " "
+					<< u_centre[2][0] << " "
                       << endl;
 
     Trace_file_dim << Doc_steady_info.number() << " "
@@ -1121,7 +1067,7 @@ void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
                    << u_centre[0][0] * Parameters::L_dim << " "
                    << u_centre[1][0] * Parameters::L_dim << " "
                    << u_centre[2][0] * Parameters::L_dim << " "
-		   << endl;
+			 << endl;
 
     //   // Are we storing XZ profile slices?
     //   if(steady && STORE_XZ_PROFILES)
@@ -1137,36 +1083,36 @@ void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
     //     // Loop over the y-values for the xz slice planes
     //     for(unsigned i=0; i<n_yplanes; i++)
     //     {
-    // 	double yi = 0.5 * (double)i / (double)10.0;
+    //	double yi = 0.5 * (double)i / (double)10.0;
 
-    // 	// Store a profile deflection slice through y=yi
-    // 	//-----------------------------------------------------
-    // 	sprintf(filename,
-    // 		"%s/xz_profile_y%.2f_%i.dat",
-    // 		Parameters::output_dir.c_str(),
-    // 		yi,
-    // 		Doc_steady_info.number());
-    // 	some_file.open(filename);
+    //	// Store a profile deflection slice through y=yi
+    //	//-----------------------------------------------------
+    //	sprintf(filename,
+    //		"%s/xz_profile_y%.2f_%i.dat",
+    //		Parameters::output_dir.c_str(),
+    //		yi,
+    //		Doc_steady_info.number());
+    //	some_file.open(filename);
 
-    // 	ppoint[0]=-Parameters::L1/2.0;
-    // 	ppoint[1]=yi;
-    // 	for(unsigned j=0; j<=n_ppoint; j++)
-    // 	{
-    // 	  for(unsigned i=0; i<n_element; i++)
-    // 	  {
-    // 	    dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(i))
-    // 	      ->locate_zeta(ppoint, ppoint_element_pt, ppoint_s);
-    // 	    if(ppoint_element_pt!=NULL)
-    // 	    {
-    // 	      z = dynamic_cast<ELEMENT*>(ppoint_element_pt)
-    // 		->interpolated_u_koiter_steigmann(ppoint_s);
-    // 	      some_file << ppoint[0]+z[6] << " " << ppoint[1]+z[7] << " " <<
-    // z[0] << std::endl; 	      break;
-    // 	    }
-    // 	  }
-    // 	  ppoint[0]+=h;
-    // 	}
-    // 	some_file.close();
+    //	ppoint[0]=-Parameters::L1/2.0;
+    //	ppoint[1]=yi;
+    //	for(unsigned j=0; j<=n_ppoint; j++)
+    //	{
+    //		for(unsigned i=0; i<n_element; i++)
+    //		{
+    //			dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(i))
+    //				->locate_zeta(ppoint, ppoint_element_pt, ppoint_s);
+    //			if(ppoint_element_pt!=NULL)
+    //			{
+    //				z = dynamic_cast<ELEMENT*>(ppoint_element_pt)
+    //		->interpolated_u_koiter_steigmann(ppoint_s);
+    //				some_file << ppoint[0]+z[6] << " " << ppoint[1]+z[7] << " " <<
+    // z[0] << std::endl;					break;
+    //			}
+    //		}
+    //		ppoint[0]+=h;
+    //	}
+    //	some_file.close();
     //     }
     //   }
   }
@@ -1237,9 +1183,13 @@ int main(int argc, char** argv)
   // Damping coefficient
   CommandLineArgs::specify_command_line_flag("--mu", &Parameters::Mu);
 
-  // Applied Pressure
-  double p_ass_dim = 500.0;
-  CommandLineArgs::specify_command_line_flag("--p", &p_ass_dim);
+  // Increment size for Pressure
+  double p_inc_dim = 500.0;
+  CommandLineArgs::specify_command_line_flag("--p_inc", &p_inc_dim);
+
+  // Incrememnt size for swelling
+  double p_max_dim = 2000.0;
+  CommandLineArgs::specify_command_line_flag("--p_max", &p_max_dim);
 
   // Maximum degree of swelling
   CommandLineArgs::specify_command_line_flag("--c_max", &Parameters::C_swell_max);
@@ -1264,28 +1214,31 @@ int main(int argc, char** argv)
   // Parse command line
   CommandLineArgs::parse_and_assign();
 
+  // Doc what has actually been specified on the command line
+  CommandLineArgs::doc_specified_flags();
+
   // How many nodes do we want to manually place along the boundaries
   // (roughly length*width/thickness)
   Parameters::n_long_edge_nodes = ceil(0.0 * Parameters::L1 / Parameters::Thickness) + 2;
   Parameters::n_short_edge_nodes = ceil(0.0 * Parameters::L2 / Parameters::Thickness) + 2;
 
-  // Get the dimensionless pressure controls from the dimensional ones
-  double p_ass = p_ass_dim / Parameters::P_dim;
+  // What are the dimensionless versions of the pressure parameters
+  Parameters::P_inc = p_inc_dim / Parameters::P_dim;
+  Parameters::P_max = p_max_dim / Parameters::P_dim;
 
-  // Doc what has actually been specified on the command line
-  CommandLineArgs::doc_specified_flags();
 
+  //===========================================================================
   // CREATE THE PROBLEM
   UnstructuredKSProblem<KoiterSteigmannC1CurvableBellElement> problem;
 
   // Set up some problem paramters
-  problem.newton_solver_tolerance() = 1e-8;
+  problem.newton_solver_tolerance() = 1e-9;
   problem.max_residuals() = 1e4;
-  problem.max_newton_iterations() = 14;
+  problem.max_newton_iterations() = 10;
   problem.target_error_safety_factor() = 0.5;
-  problem.enable_xz_profiles();
+  //problem.enable_xz_profiles();
 
-  // Restart if we have been given a restart file
+  // Restart the problem if a restart file was passed
   if (CommandLineArgs::command_line_flag_has_been_set("--restart"))
   {
     oomph_info << "We are restarting from: " << restart_file_name << std::endl;
@@ -1296,17 +1249,13 @@ int main(int argc, char** argv)
     problem.Doc_steady_info.number() -= 1;
   }
 
-  // Initial guess for timestep
+  // Set up timestepping parameters and history values
   double dt = problem.next_dt();
-  // Should we begin damped solves with a steady solve
-  bool try_steady = false;
-  // Timestep error tolerance to restrict size of damped steps
   double epsilon = 1.0e-3;
-  // Initialise timestepping in the problem
   problem.assign_initial_values_impulsive();
   problem.initialise_dt(dt);
 
-  // Open the pvd file for the steady solutions
+  // Open the pvd file that tracks all the solutions
   ofstream pvd_stream;
   pvd_stream.open(Parameters::output_dir + "/steady_solns.pvd");
   ParaviewHelper::write_pvd_header(pvd_stream);
@@ -1326,130 +1275,24 @@ int main(int argc, char** argv)
   // If we aren't restarting, do the inflation step
   if (!CommandLineArgs::command_line_flag_has_been_set("--restart"))
   {
+    // Pre-inflate the membrane
     oomph_info
       << "=================================================================\n"
       << "=================================================================\n"
       << "INFLATION STAGE\n"
-      << "=================================================================\n"
+			<< "=================================================================\n"
       << "=================================================================\n"
       << std::endl;
-    // Set the global magnitude of pressure
-    Parameters::P_mag = p_ass;
-    // <<< Solve >>>
-    std::tie(dt, try_steady) =
-      problem.damped_solve(dt, epsilon, false, try_steady);
-    // Document steady
-    problem.doc_solution(true); // AND DOCUMENT
+    while(Parameters::P_mag<Parameters::P_max)
+    {
+      // INFLATION
+      Parameters::P_mag += Parameters::P_inc;
+
+      dt = problem.damped_solve(dt, epsilon, false);
+      problem.doc_solution(true); // AND DOCUMENT
+    }
   }
 
-
-  // Swell the membrane
-  double c_inc = Parameters::C_swell_inc;
-  oomph_info
-    << "=================================================================\n"
-    << "=================================================================\n"
-    << "SWELLING STAGE\n"
-    << "=================================================================\n"
-    << "=================================================================\n"
-    << std::endl;
-  while (Parameters::C_mag < Parameters::C_swell_max)
-  {
-    // Increase the global degree of swelling
-    Parameters::C_mag += c_inc;
-    oomph_info << "Swelling increased from " << Parameters::C_mag - c_inc
-	       << " to " << Parameters::C_mag << std::endl;
-    // Update anything that depends on swelling
-    // (importantly the data object that depends on swelling)
-    Parameters::update_dependent_parameters();
-    // <<< Solve >>>
-    std::tie(dt, try_steady) =
-      problem.damped_solve(dt, epsilon, false, try_steady);
-    // Document steady
-    problem.doc_solution(true);
-  } // End of swelling loop
-
-
-
-  // Deswell the membrane
-  oomph_info
-    << "=================================================================\n"
-    << "=================================================================\n"
-    << "DESWELLING STAGE\n"
-    << "=================================================================\n"
-    << "=================================================================\n"
-    << std::endl;
-  while (Parameters::C_mag > Parameters::C_swell_min)
-  {
-    // Decrease the global degree of swelling
-    Parameters::C_mag -= c_inc;
-    oomph_info << "Swelling decreased from " << Parameters::C_mag + c_inc
-	       << " to " << Parameters::C_mag << std::endl;
-    // Update anything that depends on swelling
-    // (importantly the data object that depends on swelling)
-    Parameters::update_dependent_parameters();
-    // <<< Solve >>>
-    std::tie(dt, try_steady) =
-      problem.damped_solve(dt, epsilon, false, try_steady);
-    // Document steady
-    problem.doc_solution(true);
-  } // End of deswelling loop
-
-
-
-  // Debug stuff
-  if(CommandLineArgs::command_line_flag_has_been_set("--debug"))
-  {
-    oomph_info
-      << "=================================================================\n"
-      << "=================================================================\n"
-      << "DEBUGGING INFO\n"
-      << "=================================================================\n"
-      << "=================================================================\n"
-      << std::endl;
-
-    // Compare analytical and finite difference jacobian
-    {
-      problem.describe_dofs();
-
-      // // Add noise to dofs
-      // unsigned n_dof = problem.ndof();
-      // for (unsigned i_dof = 0; i_dof < n_dof; i_dof++)
-      // {
-      //   *problem.dof_pt(i_dof) += 10*sin(101*i_dof*i_dof);
-      // }
-
-      std::string prefix = problem.Doc_unsteady_info.directory() + "/";
-      std::string suffix = std::to_string(problem.Doc_unsteady_info.number()) + ".txt";
-      LinearAlgebraDistribution* dist = problem.dof_distribution_pt();
-      DoubleVector residual(dist);
-      CRDoubleMatrix jacobian(dist);
-
-      // Disable damping to get the normal jacobian
-      unsigned n_el = problem.mesh_pt()->nelement();
-      for (unsigned i_el = 0; i_el < n_el; i_el++)
-      {
-	dynamic_cast<KoiterSteigmannC1CurvableBellElement*>
-	  (problem.mesh_pt()->element_pt(i_el))
-	  ->disable_damping();
-      }
-
-      // Get the analytical jacobian
-      problem.get_jacobian(residual, jacobian);
-      residual.output(prefix + "residual" + suffix);
-      jacobian.sparse_indexed_output(prefix + "jacobian_analytic" + suffix);
-
-      // Enable finite difference jacobian
-      for (unsigned i_el = 0; i_el < n_el; i_el++)
-      {
-	dynamic_cast<KoiterSteigmannC1CurvableBellElement*>
-	  (problem.mesh_pt()->element_pt(i_el))
-	  ->enable_finite_difference_jacobian();
-      }
-      // Get the finite difference jacobian
-      problem.get_jacobian(residual,jacobian);
-      jacobian.sparse_indexed_output(prefix + "jacobian_fd" + suffix);
-    }
-  } // End debug block
 
   // Close the pvd file
   ParaviewHelper::write_pvd_footer(pvd_stream);

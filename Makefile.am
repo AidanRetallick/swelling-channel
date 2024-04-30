@@ -1,7 +1,8 @@
 # Name of executables: The prefix "noinst" means the executables don't
 # have to be installed anywhere.
 noinst_PROGRAMS = rectangular_plate_koiter_steigmann           \
-				  symmetric_rectangular_plate_koiter_steigmann \
+                  inflate_rectangular_plate_koiter_steigmann   \
+		  symmetric_rectangular_plate_koiter_steigmann \
                   rectangular_pressure_cycle_koiter_steigmann  \
                   infinite_strip_koiter_steigmann              \
                   euler_column_buckling_koiter_steigmann
@@ -11,6 +12,9 @@ include $(top_srcdir)/config/makefile_templates/demo_drivers
 # Local sources that each code depends on:
 rectangular_plate_koiter_steigmann_SOURCES = \
  rectangular_plate_koiter_steigmann.cc
+
+inflate_rectangular_plate_koiter_steigmann_SOURCES = \
+ inflate_rectangular_plate_koiter_steigmann.cc
 
 symmetric_rectangular_plate_koiter_steigmann_SOURCES = \
  symmetric_rectangular_plate_koiter_steigmann.cc
@@ -26,6 +30,8 @@ euler_column_buckling_koiter_steigmann_SOURCES = \
 #---------------------------------------------------------------------------
 
 rectangular_plate_koiter_steigmann_LDADD = -L@libdir@ -lc1_koiter_steigmann \
+ -lgeneric $(EXTERNAL_LIBS) $(FLIBS)
+inflate_rectangular_plate_koiter_steigmann_LDADD = -L@libdir@ -lc1_koiter_steigmann \
  -lgeneric $(EXTERNAL_LIBS) $(FLIBS)
 symmetric_rectangular_plate_koiter_steigmann_LDADD = -L@libdir@ -lc1_koiter_steigmann \
  -lgeneric $(EXTERNAL_LIBS) $(FLIBS)
