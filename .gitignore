@@ -15,14 +15,6 @@ axisym_displ_based_fvk
 *.bash
 !template.bash
 
-# Executible outputs
-ARCHIVE*/
-NEW_*/
-RESLT*/
-
-# Other results and data folders
-Element_division_demos/
-
 # Emacs
 *~undo-tree~
 compile_commands.json
@@ -81,4 +73,18 @@ m4/lt~obsolete.m4
 # can automatically generate from config.status script
 # (which is called by configure script))
 Makefile
+
+# Executibles
+rectangular_plate_koiter_steigmann
+inflate_rectangular_plate_koiter_steigmann
+symmetric_rectangular_plate_koiter_steigmann
+
+
+# Executible outputs
+ARCHIVE*/
+NEW_*/
+RESLT*/
+
+# Other results and data folders
+Element_division_demos/
 

@@ -68,7 +68,7 @@ namespace Parameters
   double L1 = 10.0;
   double L2 = 1.0;
   double Initial_thickness = 0.00548;
-  double Nu = 0.495;
+  double Nu = 0.5;
   double Mu = 1.0e0;
 
   // Control parameters
