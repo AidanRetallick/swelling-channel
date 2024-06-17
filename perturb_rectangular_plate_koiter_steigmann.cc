@@ -27,13 +27,15 @@
 // LIC// The authors may be contacted at oomph-lib@maths.man.ac.uk.
 // LIC//
 // LIC//====================================================================
-#include <fenv.h>
+
+// So we are careful with our floats :)
+#include <cfenv>
+// So we can have funky function returns
+#include <tuple>
 // Generic routines
 #include "generic.h"
-
 // The equations
 #include "c1_koiter_steigmann.h"
-
 // The mesh
 #include "meshes/triangle_mesh.h"
 
@@ -71,16 +73,15 @@ namespace Parameters
 
   // Control parameters
   double P_mag = 0.0;
+  bool Perturb = false;
+  double Pert_length = 0.0;
+  double Pert_amp = 0.0;
   double C_mag = 0.0;
+  double C_swell_max = 0.2;
+  double C_swell_min = 0.21;
+  double C_swell_inc = 0.002;
   Data* C_swell_data_pt;
-  double Isotropic_prestrain = 0.004; //0.00325;
-  // Control parameter limits
-  double P_max = 0.0;
-  double C_swell_max = 0.0;
-  double C_swell_min = 0.0;
-  // Control parameter increment sizes
-  double P_inc = 1.0;
-  double C_swell_inc = 0.0;
+  double Isotropic_prestrain = 0.003986; // 0.00325;
 
   // Dependent parameters
   double Thickness = Initial_thickness * (1.0 + C_mag);
@@ -92,7 +93,7 @@ namespace Parameters
 
   // Dimensions
   double L_dim = 4.93e-3;
-  double E_dim = 2.03e6; // 1.6242e6; //1.99e6;
+  double E_dim = 1.6242e6; // 1.99e6;
   double P_dim = E_dim * Initial_thickness;
 
   // Mesh parameters
@@ -113,7 +114,7 @@ namespace Parameters
 
   /// Pressure acting purely vertically
   void get_pressure_vert(const Vector<double>& x,
-						 const Vector<double>& u,
+		         const Vector<double>& u,
 			 const DenseMatrix<double>& grad_u,
 			 const Vector<double>& n,
 			 Vector<double>& pressure)
@@ -127,10 +128,10 @@ namespace Parameters
 
   /// Pressure depending on the position (x,y) and deformation of the sheet
   void get_pressure(const Vector<double>& x,
-				const Vector<double>& u,
-				const DenseMatrix<double>& grad_u,
-				const Vector<double>& n,
-				Vector<double>& pressure)
+		    const Vector<double>& u,
+		    const DenseMatrix<double>& grad_u,
+		    const Vector<double>& n,
+		    Vector<double>& pressure)
   {
     // Metric tensor of deformed surface
     DenseMatrix<double> G(2,2,0.0);
@@ -142,7 +143,7 @@ namespace Parameters
 	G(alpha, beta) += grad_u(alpha, beta) + grad_u(beta, alpha);
 	for (unsigned i = 0; i < 3; i++)
 	{
-		G(alpha, beta) += grad_u(i, alpha) * grad_u(i, beta);
+	  G(alpha, beta) += grad_u(i, alpha) * grad_u(i, beta);
 	}
       }
     }
@@ -156,8 +157,11 @@ namespace Parameters
     pressure[0] = p * n[0];
     pressure[1] = p * n[1];
     pressure[2] = p * n[2];
+    if (Perturb)
+    {
+      pressure[2] += Pert_amp * cos( (x[0]+u[0]) * 2.0*Pi  / Pert_length );
+    }
   }
-
 
   // Assigns the value of swelling depending on the position (x,y)
   void get_swelling(const Vector<double>& x, double& swelling)
@@ -168,9 +172,10 @@ namespace Parameters
     // + pow( (x[0]*x[1])/(L1*L2) , 10));
   }
 
+
   /// Swelling induced prestrain
   void get_swelling_prestrain(const Vector<double>& x,
-						DenseMatrix<double>& prestrain)
+			      DenseMatrix<double>& prestrain)
   {
     // Swelling at x
     double c = 0.0;
@@ -181,153 +186,6 @@ namespace Parameters
     prestrain(1,0) = 0.0;
     prestrain(1,1) = isostrain;
   }
-  // Boolean for linear elasticity
-  bool use_linear_elasticity = false;
-
-
-  //----------------------------------------------------------------------
-  // Mooney-Rivlin stress
-  //----------------------------------------------------------------------
-  // According to Li & Healey (2016)
-  //   C1 + C2 = E / 6.0
-  // Therefore, non-dimensionalising by E, we get that
-  //   C2 = 1.0 / 6.0 - C1
-
-  /// First dimensionless Mooney-Rivlin constant
-  double C1 = 1.0 / 6.6;
-
-  // Calculate in stress to ensure both don't fall out of sync
-  // /// Second dimensionless Mooney-Rivlin constant
-  // double C2 = 1.0 / 6.0 - C1;
-
-  /// Mooney Rivlin stress function
-  void mooney_rivlin_stress(const Vector<double>& x,
-			    const Vector<double>& u,
-			    const DenseMatrix<double>& e,
-			    const DenseMatrix<double>& g,
-			    DenseMatrix<double>& stress)
-  {
-    // Constants
-    const double c1 = Parameters::C1;
-    const double c2 = 1.0 / 6.0 - c1;
-
-    // Matrix of cofactors of strain tensor
-    DenseMatrix<double> cof_e(2, 2);
-    cof_e(0, 0) = e(1, 1);
-    cof_e(1, 1) = e(0, 0);
-    cof_e(0, 1) = -e(0, 1);
-    cof_e(1, 0) = -e(1, 0);
-    // Matrix of cofactors of metric tensor
-    DenseMatrix<double> cof_g(2, 2);
-    cof_g(0, 0) = g(1, 1);
-    cof_g(1, 1) = g(0, 0);
-    cof_g(0, 1) = -g(0, 1);
-    cof_g(1, 0) = -g(1, 0);
-
-    // Determinants
-    const double det_e = e(0, 0) * e(1, 1) - e(0, 1) * e(1, 0);
-    const double det_g = g(0, 0) * g(1, 1) - g(0, 1) * g(1, 0);
-    // Traces
-    const double tr_e = e(0, 0) + e(1, 1);
-    // const double tr_g = g(0,0)+g(1,1);
-    // NB det(g) = 4 det(e) + 2 Tr(e) +1
-    // Determinant of g squared minus one
-    const double det_g_2_m1 =
-      (4 * det_e + 2 * tr_e) * (4 * det_e + 2 * tr_e + 2);
-
-    // Now fill in the stress
-    // Loop over indices
-    DenseMatrix<double> i2(2, 2, 0.0);
-    i2(0, 0) = 1.0;
-    i2(1, 1) = 1.0;
-
-    // Now Fill in the Stress
-    for (unsigned alpha = 0; alpha < 2; ++alpha)
-    {
-      for (unsigned beta = 0; beta < 2; ++beta)
-      {
-        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
-        //  stress(alpha,beta)=2*(c1+ c2 / det_g) * kronecker(alpha,beta)
-        //       + 2*((- c1 - tr_g *c2) / pow(det_g,2) + c2)*cof_g(alpha,beta);
-        // For 2D:
-        // Cof g = I + 2 Cof e
-        // tr(g) = 2 + 2 tr(e)
-        // Det(g) = 4 Det(e) + 2 Tr(e) + 1
-        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
-        // ( Modified so that all terms are order epsilon if possible *)
-        stress(alpha, beta) =
-	  2 * (c2 * (-4 * det_e - 2 * tr_e) / det_g) * i2(alpha, beta) -
-	  4 * ((c1 + 2 * c2 + 2 * tr_e * c2) / pow(det_g, 2) - c2) *
-	    cof_e(alpha, beta) -
-          2 *
-            ((c1 + 2 * c2 + 2 * tr_e * c2) * (-det_g_2_m1) / pow(det_g, 2) +
-             2 * tr_e * c2) *
-            i2(alpha, beta);
-      }
-    }
-  }
-
-  /// Mooney Rivlin stiffness tensor (only fills in dstrain, not du)
-  void d_mooney_rivlin_stress_d_strain(const Vector<double>& x,
-				       const Vector<double>& u,
-				       const DenseMatrix<double>& strain,
-				       const DenseMatrix<double>& g,
-                                       RankThreeTensor<double>& d_stress_du,
-                                       RankFourTensor<double>& d_stress_dstrain)
-  {
-    // Constants
-    const double c1 = Parameters::C1;
-    const double c2 = 1.0 / 6.0 - c1;
-
-    // Matrix of cofactors of metric tensor
-    DenseMatrix<double> cof_g(2, 2);
-    cof_g(0, 0) = g(1, 1);
-    cof_g(1, 1) = g(0, 0);
-    cof_g(0, 1) = -g(0, 1);
-    cof_g(1, 0) = -g(1, 0);
-
-    // Fill in determinants
-    const double det_g = g(0, 0) * g(1, 1) - g(0, 1) * g(1, 0);
-    const double tr_g = g(0, 0) + g(1, 1);
-
-    // Identity matrix
-    DenseMatrix<double> i2(2, 2, 0.0);
-    i2(0, 0) = 1.0;
-    i2(1, 1) = 1.0;
-
-    // Now Fill in the Stress
-    for (unsigned alpha = 0; alpha < 2; ++alpha)
-    {
-      for (unsigned beta = 0; beta < 2; ++beta)
-      {
-        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
-        // stress(alpha,beta)=2*(c1+ c2 / det_g) * i2(alpha,beta)
-        //      + 2*((- c1 - tr_g *c2) / pow(det_g,2) + c2)*cof_g(alpha,beta);
-        for (unsigned gamma = 0; gamma < 2; ++gamma)
-        {
-          for (unsigned delta = 0; delta < 2; ++delta)
-          {
-            // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
-            // d (cof_g) dg
-            d_stress_dstrain(alpha, beta, gamma, delta) =
-              2 * (-2 * (c2 / pow(det_g, 2)) * i2(alpha, beta) *
-                     cof_g(gamma, delta) +
-                   2 * (c2 - (c1 + tr_g * c2) / pow(det_g, 2)) *
-                     // dcof(g)/dg = (cof(g) \otimes cof(g) - cof(g) . dg / dg .
-                     // cof(g))/det(g)
-                     (cof_g(alpha, beta) * cof_g(gamma, delta) -
-                      cof_g(alpha, gamma) * cof_g(delta, beta)) /
-                     det_g +
-                   4 * ((c1 + tr_g * c2) / pow(det_g, 3)) * cof_g(alpha, beta) *
-                     cof_g(gamma, delta) -
-                   2 * (c2 / pow(det_g, 2)) * cof_g(alpha, beta) *
-                     i2(gamma, delta));
-          }
-        }
-      }
-    }
-  }
-
 
 
   //----------------------------------------------------------------------
@@ -476,6 +334,7 @@ namespace Parameters
 
 
 
+
   // Get the exact solution
   void get_null_fct(const Vector<double>& X, double& exact_w)
   {
@@ -572,12 +431,6 @@ public:
     STORE_XZ_PROFILES = false;
   }
 
-  /// Update after solve (empty)
-  void actions_after_newton_solve()
-  {
-    /* No actions before newton solve */
-  }
-
   /// Pin the in-plane displacements and set to zero at centre
   void pin_in_plane_displacements_at_centre_node();
 
@@ -613,6 +466,12 @@ public:
                << std::endl;
   }
 
+  /// Update after solve (empty)
+  void actions_after_newton_solve()
+  {
+    // No actions after newton solve
+  }
+
   /// Remove surface mesh before reading
   void actions_before_read_unstructured_meshes()
   {
@@ -639,7 +498,6 @@ public:
     complete_problem_setup();
   }
 
-
   /// Used damped solves to get close to a steady solution, when close
   /// enough, attempt a steady solve. If that fails, be stricter about the
   /// meaning of "close enough" and repeat until a steady solve succeeds.
@@ -662,6 +520,7 @@ public:
 					const double& epsilon,
 					const bool& doc_unsteady = false,
 					const bool& begin_with_steady = false);
+
 
   /// Doc the solution
   void doc_solution(const bool steady, const std::string& comment = "");
@@ -982,11 +841,24 @@ void UnstructuredKSProblem<ELEMENT>::complete_problem_setup()
       el_pt->stress_fct_pt() = &Parameters::mooney_rivlin_stress;
       el_pt->d_stress_fct_pt() = &Parameters::d_mooney_rivlin_stress_d_strain;
     }
-    if(CommandLineArgs::command_line_flag_has_been_set("--use_fd_jacobian"))
-    {
-      el_pt->enable_finite_difference_jacobian();
-    }
 
+    // Use the fd jacobian
+    el_pt->enable_finite_difference_jacobian();
+  }
+
+  // Do we want to pin in-plane displacement?
+  if (CommandLineArgs::command_line_flag_has_been_set("--pininplane"))
+  {
+    cout << "gonna pin em" << endl;
+    // Pin the in-plane displacements
+    unsigned nnode = mesh_pt()->nnode();
+    for (unsigned inode = 0; inode < nnode; inode++)
+    {
+      mesh_pt()->node_pt(inode)->pin(0);
+      mesh_pt()->node_pt(inode)->pin(1);
+    }
+    cout << "successfully pinned" << endl;
+    assign_eqn_numbers();
   }
 
   // Set the boundary conditions
@@ -1092,12 +964,12 @@ void UnstructuredKSProblem<ELEMENT>::apply_boundary_conditions()
 	// are simply set to zero using Parameters::get_null_fct.
 	for (unsigned k = 0; k < n_pinned_u_dofs; k++)
 	{
-		unsigned k_type = pinned_u_dofs[b][i_field][k];
-		std::cout << "On boundary " << b
-				<< " pinning deflection " << i_field
-				<< " type " << k_type << std::endl;
-		el_pt->set_boundary_condition(
-			i_field, k_type, b, Parameters::get_null_fct);
+	  unsigned k_type = pinned_u_dofs[b][i_field][k];
+	  std::cout << "On boundary " << b
+		    << " pinning deflection " << i_field
+		    << " type " << k_type << std::endl;
+	  el_pt->set_boundary_condition(
+	    i_field, k_type, b, Parameters::get_null_fct);
 	} // end for loop over types that need to be pinned [k]
       } // end for loop over displacements [i_field]
     } // end for loop over elements on b [e]
@@ -1137,7 +1009,7 @@ std::tuple<double, bool> UnstructuredKSProblem<ELEMENT>::damped_solve(
   // We are unsteady until a steady solve succeeds
   bool steady = false;
   // Max residual of the steady problem before we attempt a steady solve
-  double sufficiently_small = 1.0e-2;
+  double sufficiently_small = 1.0e-7;
   // Timestep size
   double dt = dt_supplied_guess;
   // Try steady indicates when we should attempt a steady solve
@@ -1314,7 +1186,7 @@ std::tuple<double, bool> UnstructuredKSProblem<ELEMENT>::damped_solve(
 //========================================================================
 template<class ELEMENT>
 void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
-                                                   const std::string& comment)
+						  const std::string& comment)
 {
   if (MPI_Helpers::communicator_pt()->my_rank() == 0)
   {
@@ -1340,20 +1212,20 @@ void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
     // if(steady)
     //  {
     //   sprintf(filename, "%s/coarse_soln_%i.dat",
-    //			 Parameters::output_dir.c_str(),
-    //			 Doc_steady_info.number());
+    // 	     Parameters::output_dir.c_str(),
+    // 	     Doc_steady_info.number());
     //  }
     // else
     //  {
     //   sprintf(filename, "%s/coarse_soln_%i_%i.dat",
-    //			 Parameters::output_dir.c_str(),
-    //			 Doc_steady_info.number(),
-    //			 Doc_unsteady_info.number());
+    // 	     Parameters::output_dir.c_str(),
+    // 	     Doc_steady_info.number(),
+    // 	     Doc_unsteady_info.number());
     //  }
     // some_file.open(filename);
     // Bulk_mesh_pt->output(some_file,npts);
     // some_file << "TEXT X = 22, Y = 92, CS=FRAME T = \""
-    //			 << comment << "\"\n";
+    // 	     << comment << "\"\n";
     // some_file.close();
 
     // Number of plot points for fine outpout
@@ -1401,9 +1273,9 @@ void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
                       << Doc_unsteady_info.number() << " " << time() << " "
                       << Parameters::P_mag << " "
                       << Parameters::C_swell_data_pt->value(0) << " "
-					<< u_centre[0][0] << " "
-					<< u_centre[1][0] << " "
-					<< u_centre[2][0] << " "
+		      << u_centre[0][0] << " "
+		      << u_centre[1][0] << " "
+		      << u_centre[2][0] << " "
                       << endl;
 
     Trace_file_dim << Doc_steady_info.number() << " "
@@ -1413,7 +1285,7 @@ void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
                    << u_centre[0][0] * Parameters::L_dim << " "
                    << u_centre[1][0] * Parameters::L_dim << " "
                    << u_centre[2][0] * Parameters::L_dim << " "
-			 << endl;
+		   << endl;
 
     //   // Are we storing XZ profile slices?
     //   if(steady && STORE_XZ_PROFILES)
@@ -1429,36 +1301,36 @@ void UnstructuredKSProblem<ELEMENT>::doc_solution(bool steady,
     //     // Loop over the y-values for the xz slice planes
     //     for(unsigned i=0; i<n_yplanes; i++)
     //     {
-    //	double yi = 0.5 * (double)i / (double)10.0;
+    // 	double yi = 0.5 * (double)i / (double)10.0;
 
-    //	// Store a profile deflection slice through y=yi
-    //	//-----------------------------------------------------
-    //	sprintf(filename,
-    //		"%s/xz_profile_y%.2f_%i.dat",
-    //		Parameters::output_dir.c_str(),
-    //		yi,
-    //		Doc_steady_info.number());
-    //	some_file.open(filename);
+    // 	// Store a profile deflection slice through y=yi
+    // 	//-----------------------------------------------------
+    // 	sprintf(filename,
+    // 		"%s/xz_profile_y%.2f_%i.dat",
+    // 		Parameters::output_dir.c_str(),
+    // 		yi,
+    // 		Doc_steady_info.number());
+    // 	some_file.open(filename);
 
-    //	ppoint[0]=-Parameters::L1/2.0;
-    //	ppoint[1]=yi;
-    //	for(unsigned j=0; j<=n_ppoint; j++)
-    //	{
-    //		for(unsigned i=0; i<n_element; i++)
-    //		{
-    //			dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(i))
-    //				->locate_zeta(ppoint, ppoint_element_pt, ppoint_s);
-    //			if(ppoint_element_pt!=NULL)
-    //			{
-    //				z = dynamic_cast<ELEMENT*>(ppoint_element_pt)
-    //		->interpolated_u_koiter_steigmann(ppoint_s);
-    //				some_file << ppoint[0]+z[6] << " " << ppoint[1]+z[7] << " " <<
-    // z[0] << std::endl;					break;
-    //			}
-    //		}
-    //		ppoint[0]+=h;
-    //	}
-    //	some_file.close();
+    // 	ppoint[0]=-Parameters::L1/2.0;
+    // 	ppoint[1]=yi;
+    // 	for(unsigned j=0; j<=n_ppoint; j++)
+    // 	{
+    // 	  for(unsigned i=0; i<n_element; i++)
+    // 	  {
+    // 	    dynamic_cast<ELEMENT*>(Bulk_mesh_pt->element_pt(i))
+    // 	      ->locate_zeta(ppoint, ppoint_element_pt, ppoint_s);
+    // 	    if(ppoint_element_pt!=NULL)
+    // 	    {
+    // 	      z = dynamic_cast<ELEMENT*>(ppoint_element_pt)
+    // 		->interpolated_u_koiter_steigmann(ppoint_s);
+    // 	      some_file << ppoint[0]+z[6] << " " << ppoint[1]+z[7] << " " <<
+    // z[0] << std::endl; 	      break;
+    // 	    }
+    // 	  }
+    // 	  ppoint[0]+=h;
+    // 	}
+    // 	some_file.close();
     //     }
     //   }
   }
@@ -1529,29 +1401,32 @@ int main(int argc, char** argv)
   // Damping coefficient
   CommandLineArgs::specify_command_line_flag("--mu", &Parameters::Mu);
 
-  // Youngs modulus
-  CommandLineArgs::specify_command_line_flag("--youngs_modulus",
-					     &Parameters::E_dim);
-  // Prestrain
-  CommandLineArgs::specify_command_line_flag("--prestrain",
-					     &Parameters::Isotropic_prestrain);
+  // Applied Pressure
+  double p_ass_dim = 500.0;
+  CommandLineArgs::specify_command_line_flag("--p", &p_ass_dim);
 
-  // Increment size for Pressure
-  double p_inc_dim = 500.0;
-  CommandLineArgs::specify_command_line_flag("--p_inc", &p_inc_dim);
-
-  // Incrememnt size for swelling
-  double p_max_dim = 2000.0;
-  CommandLineArgs::specify_command_line_flag("--p_max", &p_max_dim);
+  // Applied swelling
+  CommandLineArgs::specify_command_line_flag("--c", &Parameters::C_mag);
 
   // Maximum degree of swelling
-  CommandLineArgs::specify_command_line_flag("--c_max", &Parameters::C_swell_max);
+  CommandLineArgs::specify_command_line_flag("--c_max",
+					     &Parameters::C_swell_max);
 
   // Minimum degree of deswelling
-  CommandLineArgs::specify_command_line_flag("--c_min", &Parameters::C_swell_min);
+  CommandLineArgs::specify_command_line_flag("--c_min",
+					     &Parameters::C_swell_min);
 
   // Incrememnt size for swelling
-  CommandLineArgs::specify_command_line_flag("--c_inc", &Parameters::C_swell_inc);
+  CommandLineArgs::specify_command_line_flag("--c_inc",
+					     &Parameters::C_swell_inc);
+
+  // Perturbation wavelength
+  double pert_length_dim = 2.0;
+  CommandLineArgs::specify_command_line_flag("--pert_length", &pert_length_dim);
+
+  // Perturbation wavelength
+  double pert_amp_dim = 10.0;
+  CommandLineArgs::specify_command_line_flag("--pert_amp", &pert_amp_dim);
 
   // Element Area (no larger element than)
   CommandLineArgs::specify_command_line_flag("--element_area",
@@ -1559,9 +1434,6 @@ int main(int argc, char** argv)
 
   // Use linear stress rather than MR
   CommandLineArgs::specify_command_line_flag("--use_linear_stress");
-
-  // Use the finite difference jacobian
-  CommandLineArgs::specify_command_line_flag("--use_fd_jacobian");
 
   // Pin u_alpha everywhere
   CommandLineArgs::specify_command_line_flag("--pininplane");
@@ -1573,31 +1445,30 @@ int main(int argc, char** argv)
   // Parse command line
   CommandLineArgs::parse_and_assign();
 
-  // Doc what has actually been specified on the command line
-  CommandLineArgs::doc_specified_flags();
-
   // How many nodes do we want to manually place along the boundaries
   // (roughly length*width/thickness)
   Parameters::n_long_edge_nodes = ceil(0.0 * Parameters::L1 / Parameters::Thickness) + 2;
   Parameters::n_short_edge_nodes = ceil(0.0 * Parameters::L2 / Parameters::Thickness) + 2;
 
-  // What are the dimensionless versions of the pressure parameters
-  Parameters::P_inc = p_inc_dim / Parameters::P_dim;
-  Parameters::P_max = p_max_dim / Parameters::P_dim;
+  // Get the dimensionless pressure controls from the dimensional ones
+  double p_ass = p_ass_dim / Parameters::P_dim;
+  Parameters::Pert_length = pert_length_dim / Parameters::L_dim;
+  Parameters::Pert_amp = pert_amp_dim / Parameters::P_dim;
 
+  // Doc what has actually been specified on the command line
+  CommandLineArgs::doc_specified_flags();
 
-  //===========================================================================
   // CREATE THE PROBLEM
   UnstructuredKSProblem<KoiterSteigmannC1CurvableBellElement> problem;
 
   // Set up some problem paramters
-  problem.newton_solver_tolerance() = 1e-9;
+  problem.newton_solver_tolerance() = 1e-8;
   problem.max_residuals() = 1e4;
-  problem.max_newton_iterations() = 10;
+  problem.max_newton_iterations() = 14;
   problem.target_error_safety_factor() = 0.5;
-  //problem.enable_xz_profiles();
+  problem.enable_xz_profiles();
 
-  // Restart the problem if a restart file was passed
+  // Restart if we have been given a restart file
   if (CommandLineArgs::command_line_flag_has_been_set("--restart"))
   {
     oomph_info << "We are restarting from: " << restart_file_name << std::endl;
@@ -1608,53 +1479,154 @@ int main(int argc, char** argv)
     problem.Doc_steady_info.number() -= 1;
   }
 
-  // Set up timestepping parameters and history values
+  // Initial guess for timestep
   double dt = problem.next_dt();
+  // Should we begin damped solves with a steady solve
   bool try_steady = false;
-  double epsilon = 1.0e-3;
+  // Timestep error tolerance to restrict size of damped steps
+  double epsilon = 1.0e-4;
+  // Initialise timestepping in the problem
   problem.assign_initial_values_impulsive();
   problem.initialise_dt(dt);
 
-  // Open the pvd file that tracks all the solutions
+  // Open the pvd file for the steady solutions
   ofstream pvd_stream;
   pvd_stream.open(Parameters::output_dir + "/steady_solns.pvd");
   ParaviewHelper::write_pvd_header(pvd_stream);
   Parameters::pvd_stream_pt = &pvd_stream;
 
-  // Perform an initial solve to get the state before any computations
-  oomph_info
-    << "=================================================================\n"
-    << "=================================================================\n"
-    << "DO AN INITIAL STATE SOLVE\n"
-    << "=================================================================\n"
-    << "=================================================================\n"
-    << std::endl;
-  problem.steady_newton_solve(); // SOLVE
 
-
-  // Pre-inflate the membrane
-  oomph_info
-    << "=================================================================\n"
-    << "=================================================================\n"
-    << "INFLATION STAGE\n"
-    << "=================================================================\n"
-    << "=================================================================\n"
-    << std::endl;
-  // If we aren't restarting, do the inflation step
+  // If we aren't restarting, get the sheet to the pre-buckled configuration
   if (!CommandLineArgs::command_line_flag_has_been_set("--restart"))
   {
-    while(Parameters::P_mag<Parameters::P_max)
-    {
-      // INFLATION
-      Parameters::P_mag += Parameters::P_inc;
-      // <<< Solve >>>
-      std::tie(dt, try_steady) =
+    oomph_info
+      << "=================================================================\n"
+      << "=================================================================\n"
+      << "PREP STAGE\n"
+      << "=================================================================\n"
+      << "=================================================================\n"
+      << std::endl;
+    // Set the global magnitude of pressure
+    Parameters::P_mag = p_ass;
+    // <<< Solve >>>
+    std::tie(dt, try_steady) =
       problem.damped_solve(dt, epsilon, false, try_steady);
-      // Document steady
-      problem.doc_solution(true); // AND DOCUMENT
-    }
+    try_steady = false;
   }
+  // Document steady
+  problem.doc_solution(true); // AND DOCUMENT
 
+
+  // Perturb the state
+  oomph_info
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << "PERTURBATION STAGE\n"
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << std::endl;
+  // Enable the perturbation
+  Parameters::Perturb = true;
+  // Increase the swelling slightly
+  Parameters::C_mag += 0.0005;
+  // <<< Solve >>>
+  std::tie(dt, try_steady) =
+    problem.damped_solve(dt, epsilon, false, try_steady);
+  try_steady = false;
+  // Document steady
+  problem.doc_solution(true); // AND DOCUMENT
+  // Disable the perturbation
+  Parameters::Perturb = false;
+  // <<< Solve >>>
+  std::tie(dt, try_steady) =
+    problem.damped_solve(dt, epsilon, false, try_steady);
+  // Document steady
+  problem.doc_solution(true); // AND DOCUMENT
+
+
+  // Deswell the membrane
+  double c_inc = Parameters::C_swell_inc;
+  oomph_info
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << "DESWELLING STAGE\n"
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << std::endl;
+  while (Parameters::C_mag > Parameters::C_swell_min)
+  {
+    // Decrease the global degree of swelling
+    Parameters::C_mag -= c_inc;
+    oomph_info << "Swelling decreased from " << Parameters::C_mag + c_inc
+	       << " to " << Parameters::C_mag << std::endl;
+    // Update anything that depends on swelling
+    // (importantly the data object that depends on swelling)
+    Parameters::update_dependent_parameters();
+    // <<< Solve >>>
+    std::tie(dt, try_steady) =
+      problem.damped_solve(dt, epsilon, false, try_steady);
+    // Always do a damped solve first
+    try_steady = false;
+    // Document steady
+    problem.doc_solution(true);
+  } // End of deswelling loop
+
+
+
+  // Debug stuff
+  if(CommandLineArgs::command_line_flag_has_been_set("--debug"))
+  {
+    oomph_info
+      << "=================================================================\n"
+      << "=================================================================\n"
+      << "DEBUGGING INFO\n"
+      << "=================================================================\n"
+      << "=================================================================\n"
+      << std::endl;
+
+    // Compare analytical and finite difference jacobian
+    {
+      problem.describe_dofs();
+
+      // // Add noise to dofs
+      // unsigned n_dof = problem.ndof();
+      // for (unsigned i_dof = 0; i_dof < n_dof; i_dof++)
+      // {
+      //   *problem.dof_pt(i_dof) += 10*sin(101*i_dof*i_dof);
+      // }
+
+      std::string prefix = problem.Doc_unsteady_info.directory() + "/";
+      std::string suffix = std::to_string(problem.Doc_unsteady_info.number()) + ".txt";
+      LinearAlgebraDistribution* dist = problem.dof_distribution_pt();
+      DoubleVector residual(dist);
+      CRDoubleMatrix jacobian(dist);
+
+      // Disable damping to get the normal jacobian
+      unsigned n_el = problem.mesh_pt()->nelement();
+      for (unsigned i_el = 0; i_el < n_el; i_el++)
+      {
+	dynamic_cast<KoiterSteigmannC1CurvableBellElement*>
+	  (problem.mesh_pt()->element_pt(i_el))
+	  ->disable_damping();
+      }
+
+      // Get the analytical jacobian
+      problem.get_jacobian(residual, jacobian);
+      residual.output(prefix + "residual" + suffix);
+      jacobian.sparse_indexed_output(prefix + "jacobian_analytic" + suffix);
+
+      // Enable finite difference jacobian
+      for (unsigned i_el = 0; i_el < n_el; i_el++)
+      {
+	dynamic_cast<KoiterSteigmannC1CurvableBellElement*>
+	  (problem.mesh_pt()->element_pt(i_el))
+	  ->enable_finite_difference_jacobian();
+      }
+      // Get the finite difference jacobian
+      problem.get_jacobian(residual,jacobian);
+      jacobian.sparse_indexed_output(prefix + "jacobian_fd" + suffix);
+    }
+  } // End debug block
 
   // Close the pvd file
   ParaviewHelper::write_pvd_footer(pvd_stream);

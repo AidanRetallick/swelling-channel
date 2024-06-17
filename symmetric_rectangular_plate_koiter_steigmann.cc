@@ -164,6 +164,152 @@ namespace Parameters
     prestrain(1,1) = isostrain;
   }
 
+
+  //----------------------------------------------------------------------
+  // Mooney-Rivlin stress
+  //----------------------------------------------------------------------
+  // According to Li & Healey (2016)
+  //   C1 + C2 = E / 6.0
+  // Therefore, non-dimensionalising by E, we get that
+  //   C2 = 1.0 / 6.0 - C1
+
+  /// First dimensionless Mooney-Rivlin constant
+  //double C1 = 1.0 / 6.6;
+  double C1 = 0.1994;
+
+  // Calculate in stress to ensure both don't fall out of sync
+  // /// Second dimensionless Mooney-Rivlin constant
+  // double C2 = 1.0 / 6.0 - C1;
+
+  /// Mooney Rivlin stress function
+  void mooney_rivlin_stress(const Vector<double>& x,
+			    const Vector<double>& u,
+			    const DenseMatrix<double>& e,
+			    const DenseMatrix<double>& g,
+			    DenseMatrix<double>& stress)
+  {
+    // Constants
+    const double c1 = Parameters::C1;
+    const double c2 = 1.0 / 6.0 - c1;
+
+    // Matrix of cofactors of strain tensor
+    DenseMatrix<double> cof_e(2, 2);
+    cof_e(0, 0) = e(1, 1);
+    cof_e(1, 1) = e(0, 0);
+    cof_e(0, 1) = -e(0, 1);
+    cof_e(1, 0) = -e(1, 0);
+    // Matrix of cofactors of metric tensor
+    DenseMatrix<double> cof_g(2, 2);
+    cof_g(0, 0) = g(1, 1);
+    cof_g(1, 1) = g(0, 0);
+    cof_g(0, 1) = -g(0, 1);
+    cof_g(1, 0) = -g(1, 0);
+
+    // Determinants
+    const double det_e = e(0, 0) * e(1, 1) - e(0, 1) * e(1, 0);
+    const double det_g = g(0, 0) * g(1, 1) - g(0, 1) * g(1, 0);
+    // Traces
+    const double tr_e = e(0, 0) + e(1, 1);
+    // const double tr_g = g(0,0)+g(1,1);
+    // NB det(g) = 4 det(e) + 2 Tr(e) +1
+    // Determinant of g squared minus one
+    const double det_g_2_m1 =
+      (4 * det_e + 2 * tr_e) * (4 * det_e + 2 * tr_e + 2);
+
+    // Now fill in the stress
+    // Loop over indices
+    DenseMatrix<double> i2(2, 2, 0.0);
+    i2(0, 0) = 1.0;
+    i2(1, 1) = 1.0;
+
+    // Now Fill in the Stress
+    for (unsigned alpha = 0; alpha < 2; ++alpha)
+    {
+      for (unsigned beta = 0; beta < 2; ++beta)
+      {
+        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
+        //  stress(alpha,beta)=2*(c1+ c2 / det_g) * kronecker(alpha,beta)
+        //       + 2*((- c1 - tr_g *c2) / pow(det_g,2) + c2)*cof_g(alpha,beta);
+        // For 2D:
+        // Cof g = I + 2 Cof e
+        // tr(g) = 2 + 2 tr(e)
+        // Det(g) = 4 Det(e) + 2 Tr(e) + 1
+        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
+        // ( Modified so that all terms are order epsilon if possible *)
+        stress(alpha, beta) =
+	  2 * (c2 * (-4 * det_e - 2 * tr_e) / det_g) * i2(alpha, beta) -
+	  4 * ((c1 + 2 * c2 + 2 * tr_e * c2) / pow(det_g, 2) - c2) *
+	    cof_e(alpha, beta) -
+          2 *
+            ((c1 + 2 * c2 + 2 * tr_e * c2) * (-det_g_2_m1) / pow(det_g, 2) +
+             2 * tr_e * c2) *
+            i2(alpha, beta);
+      }
+    }
+  }
+
+  /// Mooney Rivlin stiffness tensor (only fills in dstrain, not du)
+  void d_mooney_rivlin_stress_d_strain(const Vector<double>& x,
+				       const Vector<double>& u,
+				       const DenseMatrix<double>& strain,
+				       const DenseMatrix<double>& g,
+                                       RankThreeTensor<double>& d_stress_du,
+                                       RankFourTensor<double>& d_stress_dstrain)
+  {
+    // Constants
+    const double c1 = Parameters::C1;
+    const double c2 = 1.0 / 6.0 - c1;
+
+    // Matrix of cofactors of metric tensor
+    DenseMatrix<double> cof_g(2, 2);
+    cof_g(0, 0) = g(1, 1);
+    cof_g(1, 1) = g(0, 0);
+    cof_g(0, 1) = -g(0, 1);
+    cof_g(1, 0) = -g(1, 0);
+
+    // Fill in determinants
+    const double det_g = g(0, 0) * g(1, 1) - g(0, 1) * g(1, 0);
+    const double tr_g = g(0, 0) + g(1, 1);
+
+    // Identity matrix
+    DenseMatrix<double> i2(2, 2, 0.0);
+    i2(0, 0) = 1.0;
+    i2(1, 1) = 1.0;
+
+    // Now Fill in the Stress
+    for (unsigned alpha = 0; alpha < 2; ++alpha)
+    {
+      for (unsigned beta = 0; beta < 2; ++beta)
+      {
+        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
+        // stress(alpha,beta)=2*(c1+ c2 / det_g) * i2(alpha,beta)
+        //      + 2*((- c1 - tr_g *c2) / pow(det_g,2) + c2)*cof_g(alpha,beta);
+        for (unsigned gamma = 0; gamma < 2; ++gamma)
+        {
+          for (unsigned delta = 0; delta < 2; ++delta)
+          {
+            // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
+            // d (cof_g) dg
+            d_stress_dstrain(alpha, beta, gamma, delta) =
+              2 * (-2 * (c2 / pow(det_g, 2)) * i2(alpha, beta) *
+                     cof_g(gamma, delta) +
+                   2 * (c2 - (c1 + tr_g * c2) / pow(det_g, 2)) *
+                     // dcof(g)/dg = (cof(g) \otimes cof(g) - cof(g) . dg / dg .
+                     // cof(g))/det(g)
+                     (cof_g(alpha, beta) * cof_g(gamma, delta) -
+                      cof_g(alpha, gamma) * cof_g(delta, beta)) /
+                     det_g +
+                   4 * ((c1 + tr_g * c2) / pow(det_g, 3)) * cof_g(alpha, beta) *
+                     cof_g(gamma, delta) -
+                   2 * (c2 / pow(det_g, 2)) * cof_g(alpha, beta) *
+                     i2(gamma, delta));
+          }
+        }
+      }
+    }
+  }
+
+
   // Get the exact solution
   void get_null_fct(const Vector<double>& X, double& exact_w)
   {
@@ -266,8 +412,12 @@ public:
     /* No actions before newton solve */
   }
 
-  /// Pin the in-plane displacements and set to zero at centre
-  void pin_in_plane_displacements_at_centre_node();
+  /// Apply a periodic perturbation to the dofs with a max of epsilon
+  void perturb_dofs(double &epsilon = 1.0e-4)
+  {
+    // Loop over each node get its position, then perturb its u_z lagrange dof
+    
+  }
 
   // /// Things to repeat after every newton iteration
   // void actions_before_newton_step()
@@ -546,15 +696,15 @@ void UnstructuredKSProblem<ELEMENT>::build_mesh()
   //    |                 |     |
   //    O-----------------O     v
   //             E0
-  //    <--------L1------->
+  //    <-------L1/2------>
 
   double L1 = Parameters::L1;
   double L2 = Parameters::L2;
 
 
-  unsigned Nl = Parameters::n_long_edge_nodes;
-  unsigned Ns = Parameters::n_short_edge_nodes+2/2;
-  double hl = L1 / (Nl - 1);
+  unsigned Nl = (Parameters::n_long_edge_nodes+2)/2;
+  unsigned Ns = (Parameters::n_short_edge_nodes+2)/2;
+  double hl = 0.5*L1 / (Nl - 1);
   double hs = 0.5*L2 / (Ns - 1);
   Vector<Vector<double>> E0(Nl, Vector<double>(2, 0.0));
   Vector<Vector<double>> E1(Ns, Vector<double>(2, 0.0));
@@ -562,7 +712,7 @@ void UnstructuredKSProblem<ELEMENT>::build_mesh()
   Vector<Vector<double>> E3(Ns, Vector<double>(2, 0.0));
   for (unsigned i = 0; i < Nl; i++)
   {
-    E0[i][0] = -0.5 * L1 + i * hl;
+    E0[i][0] = i * hl;
     E0[i][1] = 0.0;
     E2[i][0] = 0.5 * L1 - i * hl;
     E2[i][1] = 0.5 * L2;
@@ -571,7 +721,7 @@ void UnstructuredKSProblem<ELEMENT>::build_mesh()
   {
     E1[i][0] = 0.5 * L1;
     E1[i][1] = i * hs;
-    E3[i][0] = -0.5 * L1;
+    E3[i][0] = 0.0;
     E3[i][1] = 0.5 * L2 - i * hs;
   }
 
@@ -648,6 +798,13 @@ void UnstructuredKSProblem<ELEMENT>::complete_problem_setup()
 
     // Enable damping in all-direction
     el_pt->enable_damping();
+
+    // Unless we are using linear stress, provide mr stress pointers
+    if(!CommandLineArgs::command_line_flag_has_been_set("--use_linear_stress"))
+    {
+      el_pt->stress_fct_pt() = &Parameters::mooney_rivlin_stress;
+      el_pt->d_stress_fct_pt() = &Parameters::d_mooney_rivlin_stress_d_strain;
+    }
 
     // Use the fd jacobian
     el_pt->enable_finite_difference_jacobian();
@@ -743,6 +900,10 @@ void UnstructuredKSProblem<ELEMENT>::apply_boundary_conditions()
     pinned_u_dofs[2][i] = pinned_edge_yn_dof;
     pinned_u_dofs[3][i] = pinned_edge_xn_dof;
   }
+  // Assign symmetric conditions to the edge along x=0
+  pinned_u_dofs[3][0] = pinned_edge_xn_dof;
+  pinned_u_dofs[3][1] = sliding_clamp_xn_dof;
+  pinned_u_dofs[3][2] = sliding_clamp_xn_dof;
   // Assign symmetric conditions to the edge along y=0
   pinned_u_dofs[0][0] = sliding_clamp_yn_dof;
   pinned_u_dofs[0][1] = pinned_edge_yn_dof;
@@ -1177,6 +1338,9 @@ int main(int argc, char** argv)
   // Element Area (no larger element than)
   CommandLineArgs::specify_command_line_flag("--element_area",
                                              &Parameters::element_area);
+
+  // Use linear stress rather than MR
+  CommandLineArgs::specify_command_line_flag("--use_linear_stress");
 
   // Pin u_alpha everywhere
   CommandLineArgs::specify_command_line_flag("--pininplane");

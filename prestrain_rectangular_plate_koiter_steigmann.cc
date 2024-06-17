@@ -82,18 +82,22 @@ namespace Parameters
   double P_inc = 1.0;
   double C_swell_inc = 0.0;
 
+  // Dimensions
+  double L_dim = 4.93e-3;
+  double E_dim = 2.03e6; //1.99e6;
+
   // Dependent parameters
   double Thickness = Initial_thickness * (1.0 + C_mag);
+  double P_dim = E_dim * Initial_thickness;
+  /// Function to update dependent parameters
   void update_dependent_parameters()
   {
+    // Check the Pressure dim is correct
+    P_dim = E_dim * Initial_thickness;
+    // Update the swelling dependent data
     Parameters::C_swell_data_pt->set_value(0, Parameters::C_mag);
     Thickness = Initial_thickness * (1.0 + C_mag);
   }
-
-  // Dimensions
-  double L_dim = 4.93e-3;
-  double E_dim = 2.03e6; // 1.6242e6; //1.99e6;
-  double P_dim = E_dim * Initial_thickness;
 
   // Mesh parameters
   double element_area = 0.1;
@@ -158,7 +162,6 @@ namespace Parameters
     pressure[2] = p * n[2];
   }
 
-
   // Assigns the value of swelling depending on the position (x,y)
   void get_swelling(const Vector<double>& x, double& swelling)
   {
@@ -167,6 +170,7 @@ namespace Parameters
       C_swell_data_pt->value(0); // * (1 - pow(x[0]/L1,10) - pow(x[1]/L2,10)
     // + pow( (x[0]*x[1])/(L1*L2) , 10));
   }
+
 
   /// Swelling induced prestrain
   void get_swelling_prestrain(const Vector<double>& x,
@@ -181,153 +185,6 @@ namespace Parameters
     prestrain(1,0) = 0.0;
     prestrain(1,1) = isostrain;
   }
-  // Boolean for linear elasticity
-  bool use_linear_elasticity = false;
-
-
-  //----------------------------------------------------------------------
-  // Mooney-Rivlin stress
-  //----------------------------------------------------------------------
-  // According to Li & Healey (2016)
-  //   C1 + C2 = E / 6.0
-  // Therefore, non-dimensionalising by E, we get that
-  //   C2 = 1.0 / 6.0 - C1
-
-  /// First dimensionless Mooney-Rivlin constant
-  double C1 = 1.0 / 6.6;
-
-  // Calculate in stress to ensure both don't fall out of sync
-  // /// Second dimensionless Mooney-Rivlin constant
-  // double C2 = 1.0 / 6.0 - C1;
-
-  /// Mooney Rivlin stress function
-  void mooney_rivlin_stress(const Vector<double>& x,
-			    const Vector<double>& u,
-			    const DenseMatrix<double>& e,
-			    const DenseMatrix<double>& g,
-			    DenseMatrix<double>& stress)
-  {
-    // Constants
-    const double c1 = Parameters::C1;
-    const double c2 = 1.0 / 6.0 - c1;
-
-    // Matrix of cofactors of strain tensor
-    DenseMatrix<double> cof_e(2, 2);
-    cof_e(0, 0) = e(1, 1);
-    cof_e(1, 1) = e(0, 0);
-    cof_e(0, 1) = -e(0, 1);
-    cof_e(1, 0) = -e(1, 0);
-    // Matrix of cofactors of metric tensor
-    DenseMatrix<double> cof_g(2, 2);
-    cof_g(0, 0) = g(1, 1);
-    cof_g(1, 1) = g(0, 0);
-    cof_g(0, 1) = -g(0, 1);
-    cof_g(1, 0) = -g(1, 0);
-
-    // Determinants
-    const double det_e = e(0, 0) * e(1, 1) - e(0, 1) * e(1, 0);
-    const double det_g = g(0, 0) * g(1, 1) - g(0, 1) * g(1, 0);
-    // Traces
-    const double tr_e = e(0, 0) + e(1, 1);
-    // const double tr_g = g(0,0)+g(1,1);
-    // NB det(g) = 4 det(e) + 2 Tr(e) +1
-    // Determinant of g squared minus one
-    const double det_g_2_m1 =
-      (4 * det_e + 2 * tr_e) * (4 * det_e + 2 * tr_e + 2);
-
-    // Now fill in the stress
-    // Loop over indices
-    DenseMatrix<double> i2(2, 2, 0.0);
-    i2(0, 0) = 1.0;
-    i2(1, 1) = 1.0;
-
-    // Now Fill in the Stress
-    for (unsigned alpha = 0; alpha < 2; ++alpha)
-    {
-      for (unsigned beta = 0; beta < 2; ++beta)
-      {
-        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
-        //  stress(alpha,beta)=2*(c1+ c2 / det_g) * kronecker(alpha,beta)
-        //       + 2*((- c1 - tr_g *c2) / pow(det_g,2) + c2)*cof_g(alpha,beta);
-        // For 2D:
-        // Cof g = I + 2 Cof e
-        // tr(g) = 2 + 2 tr(e)
-        // Det(g) = 4 Det(e) + 2 Tr(e) + 1
-        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
-        // ( Modified so that all terms are order epsilon if possible *)
-        stress(alpha, beta) =
-	  2 * (c2 * (-4 * det_e - 2 * tr_e) / det_g) * i2(alpha, beta) -
-	  4 * ((c1 + 2 * c2 + 2 * tr_e * c2) / pow(det_g, 2) - c2) *
-	    cof_e(alpha, beta) -
-          2 *
-            ((c1 + 2 * c2 + 2 * tr_e * c2) * (-det_g_2_m1) / pow(det_g, 2) +
-             2 * tr_e * c2) *
-            i2(alpha, beta);
-      }
-    }
-  }
-
-  /// Mooney Rivlin stiffness tensor (only fills in dstrain, not du)
-  void d_mooney_rivlin_stress_d_strain(const Vector<double>& x,
-				       const Vector<double>& u,
-				       const DenseMatrix<double>& strain,
-				       const DenseMatrix<double>& g,
-                                       RankThreeTensor<double>& d_stress_du,
-                                       RankFourTensor<double>& d_stress_dstrain)
-  {
-    // Constants
-    const double c1 = Parameters::C1;
-    const double c2 = 1.0 / 6.0 - c1;
-
-    // Matrix of cofactors of metric tensor
-    DenseMatrix<double> cof_g(2, 2);
-    cof_g(0, 0) = g(1, 1);
-    cof_g(1, 1) = g(0, 0);
-    cof_g(0, 1) = -g(0, 1);
-    cof_g(1, 0) = -g(1, 0);
-
-    // Fill in determinants
-    const double det_g = g(0, 0) * g(1, 1) - g(0, 1) * g(1, 0);
-    const double tr_g = g(0, 0) + g(1, 1);
-
-    // Identity matrix
-    DenseMatrix<double> i2(2, 2, 0.0);
-    i2(0, 0) = 1.0;
-    i2(1, 1) = 1.0;
-
-    // Now Fill in the Stress
-    for (unsigned alpha = 0; alpha < 2; ++alpha)
-    {
-      for (unsigned beta = 0; beta < 2; ++beta)
-      {
-        // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
-        // stress(alpha,beta)=2*(c1+ c2 / det_g) * i2(alpha,beta)
-        //      + 2*((- c1 - tr_g *c2) / pow(det_g,2) + c2)*cof_g(alpha,beta);
-        for (unsigned gamma = 0; gamma < 2; ++gamma)
-        {
-          for (unsigned delta = 0; delta < 2; ++delta)
-          {
-            // 2nd Piola Kirchhoff (Membrane) Stress for Mooney Rivlin model
-            // d (cof_g) dg
-            d_stress_dstrain(alpha, beta, gamma, delta) =
-              2 * (-2 * (c2 / pow(det_g, 2)) * i2(alpha, beta) *
-                     cof_g(gamma, delta) +
-                   2 * (c2 - (c1 + tr_g * c2) / pow(det_g, 2)) *
-                     // dcof(g)/dg = (cof(g) \otimes cof(g) - cof(g) . dg / dg .
-                     // cof(g))/det(g)
-                     (cof_g(alpha, beta) * cof_g(gamma, delta) -
-                      cof_g(alpha, gamma) * cof_g(delta, beta)) /
-                     det_g +
-                   4 * ((c1 + tr_g * c2) / pow(det_g, 3)) * cof_g(alpha, beta) *
-                     cof_g(gamma, delta) -
-                   2 * (c2 / pow(det_g, 2)) * cof_g(alpha, beta) *
-                     i2(gamma, delta));
-          }
-        }
-      }
-    }
-  }
-
 
 
   //----------------------------------------------------------------------
@@ -989,6 +846,21 @@ void UnstructuredKSProblem<ELEMENT>::complete_problem_setup()
 
   }
 
+  // Do we want to pin in-plane displacement?
+  if (CommandLineArgs::command_line_flag_has_been_set("--pininplane"))
+  {
+    cout << "gonna pin em" << endl;
+    // Pin the in-plane displacements
+    unsigned nnode = mesh_pt()->nnode();
+    for (unsigned inode = 0; inode < nnode; inode++)
+    {
+      mesh_pt()->node_pt(inode)->pin(0);
+      mesh_pt()->node_pt(inode)->pin(1);
+    }
+    cout << "successfully pinned" << endl;
+    assign_eqn_numbers();
+  }
+
   // Set the boundary conditions
   apply_boundary_conditions();
 }
@@ -1529,12 +1401,17 @@ int main(int argc, char** argv)
   // Damping coefficient
   CommandLineArgs::specify_command_line_flag("--mu", &Parameters::Mu);
 
-  // Youngs modulus
-  CommandLineArgs::specify_command_line_flag("--youngs_modulus",
-					     &Parameters::E_dim);
-  // Prestrain
+  // Prestrain on the membrane
   CommandLineArgs::specify_command_line_flag("--prestrain",
 					     &Parameters::Isotropic_prestrain);
+
+  // Prestrain max to end simultation
+  double prestrain_max = 0.03;
+  CommandLineArgs::specify_command_line_flag("--prestrain_max", &prestrain_max);
+
+  // Prestrain increment
+  double prestrain_inc = 0.001;
+  CommandLineArgs::specify_command_line_flag("--prestrain_inc", &prestrain_inc);
 
   // Increment size for Pressure
   double p_inc_dim = 500.0;
@@ -1646,7 +1523,7 @@ int main(int argc, char** argv)
     while(Parameters::P_mag<Parameters::P_max)
     {
       // INFLATION
-      Parameters::P_mag += Parameters::P_inc;
+      Parameters::P_mag = Parameters::P_max;
       // <<< Solve >>>
       std::tie(dt, try_steady) =
       problem.damped_solve(dt, epsilon, false, try_steady);
@@ -1654,6 +1531,35 @@ int main(int argc, char** argv)
       problem.doc_solution(true); // AND DOCUMENT
     }
   }
+
+
+  // Pre-inflate the membrane
+  oomph_info
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << "PRESTRAINING STAGE\n"
+    << "=================================================================\n"
+    << "=================================================================\n"
+    << std::endl;
+  // First release prestrain
+  Parameters::Isotropic_prestrain = 0.0;
+  // <<< Solve >>>
+  std::tie(dt, try_steady) =
+    problem.damped_solve(dt, epsilon, false, try_steady);
+  // Document steady
+  problem.doc_solution(true);
+  // Then incrememnt prestrain to our limit
+  while(Parameters::Isotropic_prestrain < prestrain_max)
+  {
+    // Prestrain
+    Parameters::Isotropic_prestrain += prestrain_inc;
+    // <<< Solve >>>
+    std::tie(dt, try_steady) =
+      problem.damped_solve(dt, epsilon, false, try_steady);
+    // Document steady
+    problem.doc_solution(true); // AND DOCUMENT
+  }
+
 
 
   // Close the pvd file
